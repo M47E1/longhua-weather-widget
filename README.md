@@ -1,30 +1,38 @@
-# Longhua Weather Widget — Anthropic-inspired Edition
+﻿# Paper Weather Widget — Anthropic-inspired Edition
 
-Anthropic-inspired 风格的轻量 Windows 天气小组件。支持当前天气、临近预报、模型风险提示、中文 / English 双语界面、地区切换、侧边抽屉和本地设置保存。
+纸感天气小组件是一款 Anthropic-inspired 风格的轻量 Windows 天气小组件，支持当前天气、临近预报、模型风险提示、中文 / English 双语界面、地区切换、侧边抽屉和本地设置保存。
 
-A lightweight Anthropic-inspired Windows weather widget with current weather, near-term forecast, model risk tips, bilingual UI, region switching, a side-drawer window, and local settings.
+Paper Weather Widget is a lightweight Anthropic-inspired Windows weather widget with current weather, near-term forecast, model risk tips, bilingual UI, region switching, a side-drawer window, and local settings.
 
-This is the 基础版本: a WPF-only desktop widget without WebView2, Node.js, Cloudflare, API keys, telemetry, or tracking.
+This is the 基础版本: a WPF-only desktop widget without WebView2, Node.js, Cloudflare, API keys, telemetry, or tracking. It uses an Anthropic-inspired visual style only. It is not an Anthropic or Claude product and does not use Anthropic or Claude logos.
 
 ## Download
 
-Download v1.1.0 from GitHub Releases:
+Download the current historical release from GitHub Releases:
 
-https://github.com/M47E1/longhua-weather-widget/releases/tag/v1.1.0
+https://github.com/M47E1/paper-weather-widget/releases/tag/v1.1.0
 
-Recommended assets:
+v1.1.0 was published before the project rename. Its downloadable files may still use the previous `LonghuaWeatherWidget` filename for historical compatibility.
+
+Historical v1.1.0 assets:
 
 - `LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.exe`
 - `LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.zip`
 - `SHA256SUMS.txt`
 
-The ZIP contains only `LICENSE`, `LonghuaWeatherWidget.exe`, and `README.txt`.
+The v1.1.0 ZIP contains only `LICENSE`, `LonghuaWeatherWidget.exe`, and `README.txt`.
+
+Future v1.2.0 release assets should use:
+
+- `PaperWeatherWidget-v1.2.0-win-x64.exe`
+- `PaperWeatherWidget-v1.2.0-win-x64.zip`
+- `SHA256SUMS.txt`
 
 No administrator rights are required.
 
 ## Edition
 
-The v1.1.0 UI uses an Anthropic-inspired style: paper-toned surfaces, restrained borders, compact typography, side-drawer mode, and warm accent controls. It does not use Anthropic or Claude logos, brand assets, or official product claims.
+The UI uses an Anthropic-inspired style: paper-toned surfaces, restrained borders, compact typography, side-drawer mode, and warm accent controls. The project does not claim affiliation with Anthropic or Claude.
 
 ## Features
 
@@ -61,27 +69,17 @@ Do not commit real local settings, private paths, tokens, or exact home addresse
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-release.ps1
 ```
 
-The build writes:
-
-- `dist/LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.exe`
-- `dist/LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.zip`
-- `dist/SHA256SUMS.txt`
-
-PS2EXE flags include `NoConsole`, `STA`, `DPIAware`, `SupportOS`, and `x64`. The build does not use `RequireAdmin`.
+The current build script preserves the historical v1.1.0 asset names. The next planned release, v1.2.0, should switch release asset names to `PaperWeatherWidget`.
 
 ## Testing
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Run-ProjectTests.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\LonghuaWeatherWidget.ps1 -TestMode
-```
+Use the verification scope that matches the change. Docs and GitHub metadata changes should use diff, text, and GitHub metadata checks, not weather smoke tests.
 
-Release evidence uses `reports/final-evidence/english-ui-gate-20260627-125712/final-evidence-index.json` from the RC source tree.
+Existing v1.1.0 release evidence is recorded in the release body and release candidate notes. Do not treat `RealUiInteractionSmoke` as passing; it remains a known WPF UI Automation popup limitation.
 
 ## Known Limitations
 
-- The EXE is unsigned.
-- Windows SmartScreen may show an Unknown publisher warning.
+- The EXE is unsigned. Windows SmartScreen may show an Unknown publisher warning.
 - Open-Meteo provides model current weather, not official on-site observation.
 - The base edition does not integrate an official weather warning API.
 - Model-derived content is a risk tip, not an official warning.

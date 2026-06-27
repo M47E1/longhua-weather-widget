@@ -1,24 +1,54 @@
-# Longhua Weather Widget v1.1.0 - Anthropic-inspired Edition
+﻿# Paper Weather Widget Release Notes
 
-Release title: Longhua Weather Widget v1.1.0 – Anthropic-inspired Edition
+Project rename: Paper Weather Widget / 纸感天气小组件.
 
-## What Changed
+Earlier builds used the Longhua Weather Widget name. v1.1.0 downloadable files may still use the previous `LonghuaWeatherWidget` filename for historical compatibility. Future releases should use `PaperWeatherWidget` asset names.
 
-- Adds an Anthropic-inspired UI theme with paper-toned surfaces, restrained borders, dark neutral text, and warm accent controls.
-- Keeps the 基础版本 WPF-only architecture. No WebView2 renderer code was added.
-- Preserves the current weather and forecast distinction: current data is labeled `Now`; forecast data is labeled `Forecast · HH:mm`.
-- Preserves Open-Meteo request logic, supported region catalog, cache behavior, rainstorm risk semantics, close behavior, and drawer positioning logic.
-- Builds v1.1.0 assets with `anthropic-win-x64` names and a portable ZIP containing only `LICENSE`, `LonghuaWeatherWidget.exe`, and `README.txt`.
+This project uses an Anthropic-inspired visual style only. It is not an Anthropic or Claude product, does not use Anthropic or Claude logos, and does not claim official affiliation.
 
-## Validation
+## v1.1.0 Historical Release
 
-- Source RC hash preflight passed for `LonghuaWeatherWidget.ps1`, `Test-LonghuaWeatherWidget.ps1`, `Run-ProjectTests.ps1`, and `AGENTS.md`.
-- Project tests and `-TestMode` must pass before release publication.
-- Full AllSupportedRegions evidence remains the final RC evidence index at `C:\Users\25800\Documents\今天深圳下雨了么\reports\final-evidence\english-ui-gate-20260627-125712\final-evidence-index.json`.
-- The UI-only v1.1.0 branch does not rerun the full 47-region live data gate because the data layer was not changed.
+Release title:
 
-## Notes
+Longhua Weather Widget v1.1.0 - Anthropic-inspired Edition
 
-This edition is not affiliated with, endorsed by, or using brand assets from Anthropic or Claude. The wording “Anthropic-inspired” describes a general visual direction only.
+Historical assets:
 
-The executable is unsigned. Windows SmartScreen may show an unknown publisher warning on first launch.
+- `LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.exe`
+- `LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.zip`
+- `SHA256SUMS.txt`
+
+Do not rebuild v1.1.0. Do not rewrite the v1.1.0 tag. Do not change the v1.1.0 assets.
+
+## Next Release: v1.2.0
+
+Planned release title:
+
+Paper Weather Widget v1.2.0 — Anthropic-inspired Edition
+
+Planned assets:
+
+- `PaperWeatherWidget-v1.2.0-win-x64.exe`
+- `PaperWeatherWidget-v1.2.0-win-x64.zip`
+- `SHA256SUMS.txt`
+
+Planned ZIP contents:
+
+- `LICENSE`
+- `PaperWeatherWidget.exe`
+- `README.txt`
+
+## Data Source Notes
+
+- Current weather data comes from Open-Meteo model current weather.
+- Open-Meteo data is not official on-site observation.
+- The base edition does not integrate an official weather warning API.
+- Model-derived content is a risk tip, not an official warning.
+- Only official `WarningText` should be treated as an official warning.
+- The built-in region catalog currently contains 47 real supported regions.
+
+## Validation Notes
+
+- `RealUiInteractionSmoke` remains FAIL because of WPF UI Automation popup and AutomationId limitations.
+- Do not record `RealUiInteractionSmoke` as PASS.
+- Docs-only and GitHub metadata changes should not rerun weather smoke tests.
