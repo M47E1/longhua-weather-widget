@@ -30,3 +30,5 @@ Desktop.ini
 dist/
 docs/GITHUB_UPLOAD_MANIFEST_WEATHER.md
 docs/GITHUB_REDACTION_REPORT_WEATHER.md
+reports/
+output/

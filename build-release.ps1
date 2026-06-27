@@ -1,6 +1,6 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 param(
-    [string]$Version = '1.0.0',
+    [string]$Version = '1.1.0',
     [switch]$SkipPs2ExeDownload
 )
 
@@ -28,8 +28,8 @@ if (-not $distFullPath.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCa
     throw "Refusing to clean dist outside repo: $distFullPath"
 }
 
-$exeName = "LonghuaWeatherWidget-v$Version-win-x64.exe"
-$zipName = "LonghuaWeatherWidget-v$Version-win-x64.zip"
+$exeName = "LonghuaWeatherWidget-v$Version-anthropic-win-x64.exe"
+$zipName = "LonghuaWeatherWidget-v$Version-anthropic-win-x64.zip"
 $exePath = Join-Path $distDir $exeName
 $zipPath = Join-Path $distDir $zipName
 $shaPath = Join-Path $distDir 'SHA256SUMS.txt'
@@ -86,9 +86,9 @@ $ps2exeParams = @{
     DPIAware = $true
     SupportOS = $true
     X64 = $true
-    Title = 'Longhua Weather Widget'
-    Description = 'Portable Windows PowerShell WPF weather widget for Shenzhen Longhua.'
-    Product = 'Longhua Weather Widget'
+    Title = 'Longhua Weather Widget v1.1.0 - Anthropic-inspired Edition'
+    Description = 'Anthropic-inspired local Windows PowerShell WPF weather widget.'
+    Product = 'Longhua Weather Widget - Anthropic-inspired Edition'
     Company = 'Longhua Weather Widget Project'
     Copyright = 'Copyright (c) 2026 Longhua Weather Widget contributors'
     Version = $fileVersion
@@ -107,15 +107,15 @@ try {
     Copy-Item -LiteralPath $licensePath -Destination (Join-Path $packageDir 'LICENSE') -Force
 
     $packageReadme = @"
-Longhua Weather Widget v$Version
+Longhua Weather Widget v$Version - Anthropic-inspired Edition
 
 Run LonghuaWeatherWidget.exe. No administrator rights are required.
 
-Settings are stored at:
-%LOCALAPPDATA%\LonghuaWeatherWidget\settings.json
+Settings are stored in LonghuaWeatherWidget.settings.json next to the launched script or EXE. The app does not require an API key, account, telemetry, or paid weather service.
 
-The app uses Open-Meteo as the primary weather provider and wttr.in as fallback. No API key is required.
-Weather data by Open-Meteo.
+This edition uses an Anthropic-inspired style: paper-toned surfaces, restrained borders, and warm accent colors. It is not affiliated with, endorsed by, or using brand assets from Anthropic or Claude.
+
+The app uses Open-Meteo as the primary weather provider and wttr.in as fallback. Weather data by Open-Meteo.
 
 This build is unsigned. Windows SmartScreen may show an unknown publisher warning on first launch.
 "@

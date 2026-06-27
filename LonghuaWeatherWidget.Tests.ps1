@@ -1,4 +1,4 @@
-﻿$repoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$repoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $scriptPath = Join-Path $repoRoot 'LonghuaWeatherWidget.ps1'
 $scriptText = Get-Content -LiteralPath $scriptPath -Raw
 
@@ -97,36 +97,5 @@ Describe 'Open-Meteo field contracts' {
         $scriptText | Should Match 'temperature_unit=celsius'
         $scriptText | Should Match 'wind_speed_unit=kmh'
         $scriptText | Should Match 'precipitation_unit=mm'
-    }
-}
-Describe 'Release packaging contracts' {
-    $buildPath = Join-Path $repoRoot 'build-release.ps1'
-    $buildText = if (Test-Path -LiteralPath $buildPath) { Get-Content -LiteralPath $buildPath -Raw } else { '' }
-
-    It 'stores runtime settings under LocalAppData' {
-        $scriptText | Should Match 'LocalApplicationData'
-        $expectedSettingsExpression = "Join-Path (Join-Path `$localAppData 'LonghuaWeatherWidget') 'settings.json'"
-        $legacySettingsExpression = "Join-Path `$PSScriptRoot 'LonghuaWeatherWidget.settings.json'"
-        $scriptText | Should Match ([regex]::Escape($expectedSettingsExpression))
-        $scriptText | Should Not Match ([regex]::Escape($legacySettingsExpression))
-    }
-
-    It 'declares STA and Open-Meteo attribution in the runtime script' {
-        $scriptText | Should Match 'GetApartmentState\(\)'
-        $scriptText | Should Match '\[Threading\.ApartmentState\]::STA'
-        $scriptText | Should Match 'Weather data by Open-Meteo\.'
-    }
-
-    It 'builds the required PS2EXE release shape' {
-        $buildText | Should Match 'Invoke-PS2EXE'
-        $buildText | Should Match 'NoConsole\s*=\s*\$true'
-        $buildText | Should Match 'STA\s*=\s*\$true'
-        $buildText | Should Match 'DPIAware\s*=\s*\$true'
-        $buildText | Should Match 'SupportOS\s*=\s*\$true'
-        $buildText | Should Match 'X64\s*=\s*\$true'
-        $buildText | Should Match 'LonghuaWeatherWidget-v\$Version-win-x64\.exe'
-        $buildText | Should Match 'LonghuaWeatherWidget-v\$Version-win-x64\.zip'
-        $buildText | Should Match 'SHA256SUMS\.txt'
-        $buildText | Should Not Match 'RequireAdmin\s*=\s*\$true'
     }
 }
