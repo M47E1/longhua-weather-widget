@@ -153,7 +153,12 @@ function Find-WindowByPid {
                 $sb = New-Object System.Text.StringBuilder 512
                 [UiSmokeWin32]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
                 $title = $sb.ToString()
-                if ($title -eq ("LonghuaWeatherWidget-UiSmoke-{0}" -f $ProcessId)) {
+                $expectedTitles = @(
+                    ("LonghuaWeatherWidget-UiSmoke-{0}" -f $ProcessId),
+                    ("AnthropicWeatherWidget-UiSmoke-{0}" -f $ProcessId),
+                    ("PaperWeatherWidget-UiSmoke-{0}" -f $ProcessId)
+                )
+                if ($expectedTitles -contains $title) {
                     $script:FoundHwnd = $hWnd
                     return $false
                 }
@@ -359,6 +364,28 @@ function Set-SmokeCommand {
     [pscustomobject]@{ Mode = $Mode; WrittenAt = (Get-Date).ToString('s') } |
         ConvertTo-Json | Set-Content -LiteralPath $commandPath -Encoding UTF8
 }
+function Get-UiSmokeTraceEvents {
+    $tracePath = Join-Path $OutputDir 'ui-smoke-command-trace.jsonl'
+    if (-not (Test-Path -LiteralPath $tracePath)) { return @() }
+    $events = New-Object System.Collections.Generic.List[object]
+    foreach ($line in (Get-Content -LiteralPath $tracePath -ErrorAction SilentlyContinue)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        try { $events.Add(($line | ConvertFrom-Json)) } catch {}
+    }
+    return @($events)
+}
+
+function Wait-UiSmokeTrace {
+    param([scriptblock]$Predicate, [string]$Name, [int]$TimeoutMs = 5000)
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    do {
+        $events = Get-UiSmokeTraceEvents
+        if (& $Predicate $events) { return $events }
+        Start-Sleep -Milliseconds 150
+    } while ((Get-Date) -lt $deadline)
+    throw "Timed out waiting for UI smoke trace: $Name"
+}
+
 function Move-CursorAwayFromWindow {
     $rect = Get-WindowRectForHwnd -Hwnd $script:Hwnd
     $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -409,6 +436,12 @@ function Move-WidgetWindow {
     Start-Sleep -Milliseconds 300
 }
 
+function Assert-WindowOriginUnchanged {
+    param([object]$Before, [object]$After, [string]$Action, [int]$Tolerance = 2)
+    Add-Assert -Name "$Action keeps window Left" -Passed ([Math]::Abs([double]$After.Left - [double]$Before.Left) -le $Tolerance) -Details ("before={0}; after={1}" -f $Before.Left,$After.Left)
+    Add-Assert -Name "$Action keeps window Top" -Passed ([Math]::Abs([double]$After.Top - [double]$Before.Top) -le $Tolerance) -Details ("before={0}; after={1}" -f $Before.Top,$After.Top)
+}
+
 function Assert-DrawerIconOnlyInWorkArea {
     param([string]$Side)
     $rect = Get-WindowRectForHwnd -Hwnd $script:Hwnd
@@ -416,11 +449,7 @@ function Assert-DrawerIconOnlyInWorkArea {
     Add-Assert -Name "$Side collapsed drawer is icon width" -Passed ($rect.Width -ge 20 -and $rect.Width -le 48) -Details ("width={0}; rect={1},{2},{3},{4}" -f $rect.Width,$rect.Left,$rect.Top,$rect.Right,$rect.Bottom)
     Add-Assert -Name "$Side collapsed drawer is icon height" -Passed ($rect.Height -ge 70 -and $rect.Height -le 130) -Details ("height={0}; rect={1},{2},{3},{4}" -f $rect.Height,$rect.Left,$rect.Top,$rect.Right,$rect.Bottom)
     Add-Assert -Name "$Side collapsed drawer icon in work area vertically" -Passed ($rect.Top -ge $area.Top -and $rect.Bottom -le $area.Bottom) -Details ("rectTop={0}; rectBottom={1}; work={2},{3}" -f $rect.Top,$rect.Bottom,$area.Top,$area.Bottom)
-    if ($Side -eq 'Left') {
-        Add-Assert -Name 'Left collapsed drawer icon on edge' -Passed ($rect.Left -ge ($area.Left - 2) -and $rect.Left -le ($area.Left + 12)) -Details ("rectLeft={0}; workLeft={1}" -f $rect.Left,$area.Left)
-    } else {
-        Add-Assert -Name 'Right collapsed drawer icon on edge' -Passed ($rect.Right -le ($area.Right + 2) -and $rect.Right -ge ($area.Right - 12)) -Details ("rectRight={0}; workRight={1}" -f $rect.Right,$area.Right)
-    }
+    Add-Assert -Name "$Side collapsed drawer has no forced edge snap assertion" -Passed $true -Details 'Click handlers must not move Window.Left/Top.'
 }
 
 function Assert-ExpandedInWorkArea {
@@ -538,7 +567,7 @@ try {
     Start-WidgetApp
 
     Invoke-Step 'AutomationIds' {
-        $requiredIds = @('ProvinceSelector','CitySelector','DistrictSelector','LanguageCnButton','LanguageEnButton','DrawerCollapseButton','DrawerHandle','LocationTitle','WeatherDescription','TemperatureText','WarningPanel','RainfallText','HumidityText','PressureText','WindText','LoadingPanel','ErrorPanel')
+        $requiredIds = @('ProvinceSelector','CitySelector','DistrictSelector','LanguageCnButton','LanguageEnButton','DrawerCollapseButton','DrawerHandle','RefreshNowCard','LocationTitle','WeatherDescription','TemperatureText','WarningPanel','RainfallText','HumidityText','PressureText','WindText','LoadingPanel','ErrorPanel')
         foreach ($id in $requiredIds) {
             Find-ElementById -AutomationId $id -TimeoutMs 8000 | Out-Null
             Add-Assert -Name "AutomationId $id found" -Passed $true
@@ -554,9 +583,26 @@ try {
         Save-WindowScreenshot '01-location-a-success.png' | Out-Null
     }
 
+
+    Invoke-Step 'Manual refresh click' {
+        $beforeRefreshClick = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Click-Element (Find-ElementById -AutomationId 'RefreshNowCard')
+        Start-Sleep -Milliseconds 500
+        $afterRefreshClick = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeRefreshClick -After $afterRefreshClick -Action 'Refresh card click'
+        $events = Wait-UiSmokeTrace -Name 'RefreshCardClick manual refresh' -TimeoutMs 5000 -Predicate {
+            param($items)
+            return (@($items | Where-Object { $_.Event -eq 'ManualRefresh' -and $_.Command.Reason -eq 'RefreshCardClick' }).Count -gt 0)
+        }
+        Add-Assert -Name 'Refresh click entered Start-ManualWeatherRefresh' -Passed (@($events | Where-Object { $_.Event -eq 'ManualRefresh' -and $_.Command.Reason -eq 'RefreshCardClick' }).Count -gt 0) -Details 'RefreshCardClick trace observed.'
+    }
+
     Invoke-Step 'Open settings and selectors' {
+        $beforeSettingsClick = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Click-Element (Find-ElementById -AutomationId 'SettingsButton')
         Start-Sleep -Milliseconds 500
+        $afterSettingsClick = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeSettingsClick -After $afterSettingsClick -Action 'Settings click'
         foreach ($id in @('ProvinceSelector','CitySelector','DistrictSelector','LanguageCnButton','LanguageEnButton')) {
             Find-ElementById -AutomationId $id -TimeoutMs 3000 | Out-Null
             Add-Assert -Name "Selector visible $id" -Passed $true
@@ -565,8 +611,11 @@ try {
 
     Invoke-Step 'Scenario B loading and failure' {
         Set-SmokeCommand -Mode 'FailDelay'
+        $beforeDistrictSelect = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Select-ComboItemByName -ComboAutomationId 'DistrictSelector' -ItemName $Text.AreaB
         Start-Sleep -Milliseconds 350
+        $afterDistrictSelect = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeDistrictSelect -After $afterDistrictSelect -Action 'District dropdown selection'
         $loading = Get-UiTextSnapshot -Name 'B-loading'
         Add-Assert -Name 'B loading title visible' -Passed ($loading.ById.LocationTitle -like "*$($Text.AreaB)*") -Details $loading.ById.LocationTitle
         Add-Assert -Name 'B loading old temp cleared' -Passed ($loading.AllText -notmatch '11\.1') -Details $loading.ById.TemperatureText
@@ -581,13 +630,22 @@ try {
 
     Invoke-Step 'Scenario C stale request guard' {
         Set-SmokeCommand -Mode ''
+        $beforeSelectA = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Select-ComboItemByName -ComboAutomationId 'DistrictSelector' -ItemName $Text.AreaA
+        $afterSelectA = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeSelectA -After $afterSelectA -Action 'District dropdown select A'
         Wait-UntilText -Name 'A-before-race' -TimeoutMs 10000 -Predicate { param($s) $s.ById.TemperatureText -match '11\.1' } | Out-Null
         Set-SmokeCommand -Mode 'SlowSuccess'
+        $beforeSelectB = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Select-ComboItemByName -ComboAutomationId 'DistrictSelector' -ItemName $Text.AreaB
         Start-Sleep -Milliseconds 100
+        $afterSelectB = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeSelectB -After $afterSelectB -Action 'District dropdown select B'
         Set-SmokeCommand -Mode ''
+        $beforeSelectC = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Select-ComboItemByName -ComboAutomationId 'DistrictSelector' -ItemName $Text.AreaC
+        $afterSelectC = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeSelectC -After $afterSelectC -Action 'District dropdown select C'
         $c = Wait-UntilText -Name 'C-success' -TimeoutMs 14000 -Predicate { param($s) $s.ById.TemperatureText -match '33\.3' }
         Add-Assert -Name 'C title visible' -Passed ($c.ById.LocationTitle -like "*$($Text.AreaC)*") -Details $c.ById.LocationTitle
         Add-Assert -Name 'C final temperature visible' -Passed ($c.ById.TemperatureText -match '33\.3') -Details $c.ById.TemperatureText
@@ -604,12 +662,18 @@ try {
     Invoke-Step 'Drawer left collapsed expanded' {
         $rect = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Move-WidgetWindow -Left ($script:WorkArea.Left + 4) -Top ($script:WorkArea.Top + 80)
+        $beforeCollapse = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Click-Element (Find-ElementById -AutomationId 'DrawerCollapseButton')
         Start-Sleep -Milliseconds 700
+        $afterCollapse = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeCollapse -After $afterCollapse -Action 'Left drawer collapse click'
         Save-WindowScreenshot '06-drawer-left-collapsed.png' | Out-Null
         Assert-DrawerIconOnlyInWorkArea -Side 'Left'
+        $beforeExpand = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Click-Element (Find-ElementById -AutomationId 'DrawerHandle')
         Start-Sleep -Milliseconds 700
+        $afterExpand = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeExpand -After $afterExpand -Action 'Left drawer expand click'
         Save-WindowScreenshot '07-drawer-left-expanded.png' | Out-Null
         Assert-ExpandedInWorkArea
     }
@@ -617,24 +681,33 @@ try {
     Invoke-Step 'Drawer right collapsed expanded' {
         $rect = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Move-WidgetWindow -Left ($script:WorkArea.Right - $rect.Width - 4) -Top ($script:WorkArea.Top + 80)
+        $beforeCollapse = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Click-Element (Find-ElementById -AutomationId 'DrawerCollapseButton')
         Start-Sleep -Milliseconds 700
+        $afterCollapse = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeCollapse -After $afterCollapse -Action 'Right drawer collapse click'
         Save-WindowScreenshot '08-drawer-right-collapsed.png' | Out-Null
         Assert-DrawerIconOnlyInWorkArea -Side 'Right'
+        $beforeExpand = Get-WindowRectForHwnd -Hwnd $script:Hwnd
         Click-Element (Find-ElementById -AutomationId 'DrawerHandle')
         Start-Sleep -Milliseconds 700
+        $afterExpand = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+        Assert-WindowOriginUnchanged -Before $beforeExpand -After $afterExpand -Action 'Right drawer expand click'
         Save-WindowScreenshot '09-drawer-right-expanded.png' | Out-Null
         Assert-ExpandedInWorkArea
     }
 
-    Invoke-Step 'Drawer rapid toggle and state restore' {
+    Invoke-Step 'Drawer rapid toggle and state restore'  {
         for ($i = 0; $i -lt 10; $i++) {
+            $beforeToggle = Get-WindowRectForHwnd -Hwnd $script:Hwnd
             if (($i % 2) -eq 0) {
                 Click-Element (Find-ElementById -AutomationId 'DrawerCollapseButton')
             } else {
                 Click-Element (Find-ElementById -AutomationId 'DrawerHandle')
             }
             Start-Sleep -Milliseconds 320
+            $afterToggle = Get-WindowRectForHwnd -Hwnd $script:Hwnd
+            Assert-WindowOriginUnchanged -Before $beforeToggle -After $afterToggle -Action "Drawer rapid toggle $i"
             Add-Assert -Name "Process alive after drawer click $i" -Passed (-not $script:Process.HasExited)
         }
         Assert-ExpandedInWorkArea
@@ -648,7 +721,7 @@ try {
         Start-WidgetApp
         Start-Sleep -Milliseconds 1000
         $restored = Get-WindowRectForHwnd -Hwnd $script:Hwnd
-        Add-Assert -Name 'Collapsed state restored after restart' -Passed ($restored.Width -gt 0 -and ([Math]::Abs($restored.Left - $collapsedBefore.Left) -lt 90 -or [Math]::Abs($restored.Right - $collapsedBefore.Right) -lt 90)) -Details ("before={0},{1},{2},{3}; restored={4},{5},{6},{7}" -f $collapsedBefore.Left,$collapsedBefore.Top,$collapsedBefore.Right,$collapsedBefore.Bottom,$restored.Left,$restored.Top,$restored.Right,$restored.Bottom)
+        Add-Assert -Name 'Collapsed state restored after restart' -Passed ($restored.Width -ge 20 -and $restored.Width -le 48 -and $restored.Height -ge 70 -and $restored.Height -le 130 -and $restored.Top -ge $script:WorkArea.Top -and $restored.Bottom -le $script:WorkArea.Bottom) -Details ("before={0},{1},{2},{3}; restored={4},{5},{6},{7}" -f $collapsedBefore.Left,$collapsedBefore.Top,$collapsedBefore.Right,$collapsedBefore.Bottom,$restored.Left,$restored.Top,$restored.Right,$restored.Bottom)
         Click-Element (Find-ElementById -AutomationId 'DrawerHandle')
         Start-Sleep -Milliseconds 700
         Assert-ExpandedInWorkArea

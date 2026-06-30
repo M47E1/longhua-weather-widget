@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $script:Passed = 0
 $script:Failed = 0
@@ -238,6 +238,20 @@ $clearSnapshot = [pscustomobject]@{
 Assert-Equal 'NoWeatherAlert' (Get-WeatherAlertInfo -Snapshot $clearSnapshot).Key 'weather alert clear'
 Assert-Equal 448 (Get-WidgetTargetHeight -SettingsOpen $false) 'window compact height target'
 Assert-Equal 656 (Get-WidgetTargetHeight -SettingsOpen $true) 'window settings height target'
+$heightFunctionBlock = [regex]::Match($scriptText, 'function Set-WidgetWindowHeight \{(?<body>.*?)function Set-DrawerEdgePosition \{', [System.Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
+Assert-True (-not ($heightFunctionBlock -match '\.(Top|Left)\s*=')) 'settings height changes do not rewrite window position'
+Assert-True (-not ($heightFunctionBlock -match 'Set-DrawerEdgePosition')) 'settings height changes do not trigger drawer edge reposition'
+Assert-True ($scriptText -match '\$window\.SizeToContent = \[System\.Windows\.SizeToContent\]::Manual') 'window size-to-content is explicitly manual'
+Assert-True ($scriptText -match '\$window\.WindowStartupLocation = \[System\.Windows\.WindowStartupLocation\]::Manual') 'window startup location is explicitly manual'
+Assert-True (-not ($scriptText -match '\$border\.Add_MouseLeftButtonDown\(\{[\s\S]*?Start-WidgetWindowDrag')) 'root border does not start window drag'
+Assert-True (-not ($scriptText -match 'PreviewMouseLeftButtonDownEvent, \$widgetDragPreviewHandler')) 'preview mouse down does not start window drag'
+Assert-True ($scriptText -match '\$titleBlock\.Add_MouseLeftButtonDown\(\{[\s\S]*?Start-WidgetWindowDrag') 'title text remains the explicit drag handle'
+$updateWeatherBlock = [regex]::Match($scriptText, 'function Update-Weather \{(?<body>.*?)\$provinceCombo\.Add_SelectionChanged\(\{', [System.Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
+Assert-True ($scriptText -match 'DownloadStringTaskAsync') 'weather refresh uses async HTTP download'
+Assert-True ($updateWeatherBlock -match 'Start-WeatherRefreshAsync -Request \$request') 'Update-Weather schedules async refresh work'
+Assert-True (-not ($updateWeatherBlock -match 'Get-WeatherModel')) 'Update-Weather does not build weather model on UI thread'
+Assert-True (-not ($updateWeatherBlock -match 'DownloadString')) 'Update-Weather does not synchronously download weather on UI thread'
+Assert-True (-not ($updateWeatherBlock -match 'DoEvents|Start-Sleep')) 'Update-Weather does not pump or sleep the UI thread during refresh'
 Assert-True ($scriptText -match '\$settingsIconText = New-TextBlock -Text \(New-WeatherGlyph 0x2699\)') 'settings icon uses gear glyph'
 Assert-True ($scriptText -match '\$settingsIconRotate\.Angle = 28') 'settings icon rotates on expanded state'
 Assert-True ($scriptText -match '\$settingsIconGrid\.Height = 18') 'settings icon height scaled 1.5x'
@@ -256,6 +270,26 @@ Assert-True (-not ($scriptText -match 'DrawerHoverArmed')) 'drawer no longer use
 $drawerPositionBlock = [regex]::Match($scriptText, 'function Set-DrawerEdgePosition \{(?<body>.*?)function Set-WindowDrawerState \{', [System.Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
 Assert-True (-not ($drawerPositionBlock -match "'Top'")) 'drawer position logic does not dock to top edge'
 Assert-True (-not ($drawerPositionBlock -match "'Bottom'")) 'drawer position logic does not dock to bottom edge'
+Assert-True (-not ($drawerPositionBlock -match '\$Window\.Top\s*=')) 'Set-DrawerEdgePosition does not write Window.Top'
+Assert-True (-not ($drawerPositionBlock -match '\$Window\.Left\s*=')) 'Set-DrawerEdgePosition does not write Window.Left'
+Assert-True ($scriptText -match '\$drawerHandle\.Background = ''#00FFFFFF''') 'collapsed drawer handle is transparent, not a visible block'
+Assert-True ($scriptText -match 'function Start-ManualWeatherRefresh') 'manual refresh has explicit handler function'
+Assert-True ($scriptText -match 'Start-ManualWeatherRefresh -Reason ''RefreshCardClick''') 'refresh card click enters manual refresh chain'
+Assert-True ($scriptText -match 'DownloadStringTaskAsync') 'weather refresh uses non-blocking async download'
+$startupRainLayerBlock = [regex]::Match($scriptText, '\$rainLayer = New-Object System\.Windows\.Controls\.Canvas(?<body>.*?)\$scrollViewer = New-Object System\.Windows\.Controls\.ScrollViewer', [System.Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
+Assert-True (-not ($startupRainLayerBlock -match 'for \(\$i = 0; \$i -lt 18')) 'startup does not build hidden rain streak controls'
+Assert-True ($scriptText -match 'function Ensure-RainLayerVisuals') 'rain streak visuals are lazily initialized'
+Assert-True ($scriptText -match 'function Ensure-LightningLayerVisual') 'lightning visuals are lazily initialized'
+Assert-True ($scriptText -match 'Ensure-RainLayerVisuals[\s\S]*?\$rainLayer\.Visibility = \[System\.Windows\.Visibility\]::Visible') 'rain layer is initialized before becoming visible'
+Assert-True ($scriptText -match '\$script:SettingsCombosInitialized = \$false') 'settings combo item population is lazy at startup'
+Assert-True ($scriptText -match 'function Ensure-SettingsCombosInitialized') 'settings combo initialization has an explicit lazy gate'
+Assert-True ($scriptText -match 'if \(\$Open\) \{[\s\S]*?Ensure-SettingsCombosInitialized[\s\S]*?\$settingsPanel\.Visibility = \[System\.Windows\.Visibility\]::Visible') 'settings combos initialize before settings panel becomes visible'
+Assert-True ($scriptText -match 'function Update-ForecastChips \{[\s\S]*?\$script:SettingsCombosInitialized[\s\S]*?Update-ForecastControls') 'hidden forecast dropdowns are not populated before settings controls are initialized'
+Assert-True ($scriptText -match 'function New-WidgetLinearGradientBrush') 'startup gradient brushes use programmatic construction'
+$startupSurfaceBlock = [regex]::Match($scriptText, '\$border = New-Object System\.Windows\.Controls\.Border(?<body>.*?)\$scrollViewer = New-Object System\.Windows\.Controls\.ScrollViewer', [System.Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
+Assert-True (-not ($startupSurfaceBlock -match 'New-XamlObject @''')) 'startup surface gradients do not parse XAML before first render'
+Assert-True ($scriptText -match "New-City 'Zhongshan'") 'Guangdong catalog includes Zhongshan'
+Assert-True ($scriptText -match "EnvicoolShenzhenHQ") 'Guangdong catalog includes Envicool Shenzhen site approximate node'
 $collapseButtonBlock = [regex]::Match($scriptText, '\$closeButton\.Add_MouseLeftButtonUp\(\{(?<body>.*?)\}\)', [System.Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
 Assert-True ($collapseButtonBlock -match '\$window\.Close\(\)') 'top-right button closes the app'
 Assert-True (-not ($collapseButtonBlock -match 'Collapse-WindowDrawer -Window \$window')) 'top-right close button no longer collapses the drawer'

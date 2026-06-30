@@ -27,6 +27,83 @@ Add-Type -AssemblyName System.Windows.Forms
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+$script:WidgetStartupScriptRoot = $PSScriptRoot
+$script:WidgetStartupCommandPath = $PSCommandPath
+$script:WidgetStartupInvocationPath = $MyInvocation.MyCommand.Path
+$script:WidgetStartupDefinition = $MyInvocation.MyCommand.Definition
+
+function Test-WidgetNonEmptyText {
+    param([object]$Value)
+    return (-not [string]::IsNullOrWhiteSpace([string]$Value))
+}
+
+function Resolve-WidgetAppBasePath {
+    param([string[]]$Candidates = $null)
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $Candidates) {
+        foreach ($candidate in $Candidates) { $paths.Add([string]$candidate) | Out-Null }
+    } else {
+        if (Test-WidgetNonEmptyText $script:WidgetStartupScriptRoot) { $paths.Add([string]$script:WidgetStartupScriptRoot) | Out-Null }
+        if (Test-WidgetNonEmptyText $script:WidgetStartupCommandPath) { $paths.Add((Split-Path -Parent ([string]$script:WidgetStartupCommandPath))) | Out-Null }
+        if (Test-WidgetNonEmptyText $script:WidgetStartupInvocationPath) { $paths.Add((Split-Path -Parent ([string]$script:WidgetStartupInvocationPath))) | Out-Null }
+        try {
+            $processPath = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            if (Test-WidgetNonEmptyText $processPath) { $paths.Add(([IO.Path]::GetDirectoryName($processPath))) | Out-Null }
+        } catch {}
+        try {
+            $baseDirectory = [AppDomain]::CurrentDomain.BaseDirectory
+            if (Test-WidgetNonEmptyText $baseDirectory) { $paths.Add($baseDirectory) | Out-Null }
+        } catch {}
+        try {
+            $currentDirectory = (Get-Location).Path
+            if (Test-WidgetNonEmptyText $currentDirectory) { $paths.Add($currentDirectory) | Out-Null }
+        } catch {}
+    }
+
+    foreach ($candidate in $paths) {
+        if (-not (Test-WidgetNonEmptyText $candidate)) { continue }
+        try {
+            $fullPath = [IO.Path]::GetFullPath([string]$candidate)
+            if (Test-Path -LiteralPath $fullPath -PathType Container) { return $fullPath }
+        } catch {}
+    }
+
+    throw 'Unable to resolve widget application directory.'
+}
+
+function Resolve-WidgetBootstrapScriptPath {
+    param([string[]]$Candidates = $null)
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $Candidates) {
+        foreach ($candidate in $Candidates) { $paths.Add([string]$candidate) | Out-Null }
+    } else {
+        if (Test-WidgetNonEmptyText $script:WidgetStartupCommandPath) { $paths.Add([string]$script:WidgetStartupCommandPath) | Out-Null }
+        if (Test-WidgetNonEmptyText $script:WidgetStartupInvocationPath) { $paths.Add([string]$script:WidgetStartupInvocationPath) | Out-Null }
+    }
+
+    foreach ($candidate in $paths) {
+        if (-not (Test-WidgetNonEmptyText $candidate)) { continue }
+        try {
+            $fullPath = [IO.Path]::GetFullPath([string]$candidate)
+            if (Test-Path -LiteralPath $fullPath -PathType Leaf) { return $fullPath }
+        } catch {}
+    }
+
+    return ''
+}
+
+function Get-WidgetBootstrapScriptText {
+    if (Test-WidgetNonEmptyText (Resolve-WidgetBootstrapScriptPath)) { return '' }
+    if (Test-WidgetNonEmptyText $script:WidgetStartupDefinition -and [string]$script:WidgetStartupDefinition -match 'Get-WeatherModel') {
+        return [string]$script:WidgetStartupDefinition
+    }
+    return ''
+}
+
+$script:AppBasePath = Resolve-WidgetAppBasePath
+$script:WidgetBootstrapScriptText = Get-WidgetBootstrapScriptText
 if (-not ('LonghuaWeatherTimeoutWebClient' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -60,11 +137,11 @@ public sealed class LonghuaWeatherTimeoutWebClient : WebClient
 '@
 }
 
-$script:ReduceMotion = $false
+$script:ReduceMotion = $true
 try {
-    $script:ReduceMotion = -not [System.Windows.SystemParameters]::ClientAreaAnimation
+    $script:ReduceMotion = $true
 } catch {
-    $script:ReduceMotion = $false
+    $script:ReduceMotion = $true
 }
 
 function Get-ApplicationRoot {
@@ -121,6 +198,7 @@ $script:SelectedDistrictKey = $script:DefaultDistrictKey
 $script:RefreshSeconds = if (@(60, 3600, 86400) -contains $RefreshSeconds) { $RefreshSeconds } else { 60 }
 $script:UpdatingControls = $false
 $script:SettingsOpen = $false
+$script:SettingsCombosInitialized = $false
 $script:CurrentStatusKey = 'Loading'
 $script:NextRefreshAt = (Get-Date).AddSeconds($script:RefreshSeconds)
 $script:WeatherRequestTimeoutMs = 6000
@@ -146,6 +224,11 @@ $script:WeatherModelCache = @{}
 $script:WeatherRequestSequence = 0
 $script:ActiveWeatherRequestId = 0
 $script:ActiveWeatherRequestLocationKey = $null
+$script:WeatherRefreshInProgress = $false
+$script:PendingWeatherRefresh = $false
+$script:ActiveWeatherRefreshState = $null
+$script:RainLayerInitialized = $false
+$script:LightningLayerInitialized = $false
 $script:ThunderActive = $false
 $script:DrawerEdge = $null
 $script:DrawerExpanded = $true
@@ -160,6 +243,8 @@ $script:DrawerScreenDeviceName = $null
 $script:DraggingWindow = $false
 $script:UiSmokeSelectionChangedCount = 0
 $script:UiSmokeLastCommandId = ''
+$script:LastWeatherRefreshTrigger = ''
+$script:ManualWeatherRefreshInvokeCount = 0
 
 $script:CurrentFields = @(
     'temperature_2m',
@@ -306,6 +391,7 @@ $script:Provinces = @(
     New-Province 'Guangdong' 'Guangdong' '5bm/5Lic55yB' @(
         New-City 'Shenzhen' 'Shenzhen' '5rex5Zyz' 22.543096 114.057865 @(
         New-District 'Longhua' 'Longhua' '6b6Z5Y2O5Yy6' 22.657383 114.016242
+        New-District 'EnvicoolShenzhenHQ' 'Envicool Shenzhen HQ' '6Iux57u05YWL5rex5Zyz5oC76YOo' 22.718000 114.052000 'EnvicoolOfficialAddressApprox' 'ApproximateSite' '2026-06-30' $true
         New-District 'Nanshan' 'Nanshan' '5Y2X5bGx5Yy6' 22.531221 113.930475
         New-District 'Futian' 'Futian' '56aP55Sw5Yy6' 22.540922 114.050891
         New-District 'Luohu' 'Luohu' '572X5rmW5Yy6' 22.548389 114.131611
@@ -321,6 +407,11 @@ $script:Provinces = @(
         New-District 'Haizhu' 'Haizhu' '5rW354+g5Yy6' 23.083310 113.317200
         New-District 'Panyu' 'Panyu' '55Wq56a65Yy6' 22.937720 113.384100
         New-District 'Baiyun' 'Baiyun' '55m95LqR5Yy6' 23.159900 113.273200
+    )
+        New-City 'Zhongshan' 'Zhongshan' '5Lit5bGx' 22.517585 113.392770 @(
+        New-District 'Shiqi' 'Shiqi' '55+z5bKQ5Yy6' 22.525160 113.382391
+        New-District 'EastDistrict' 'East District' '5Lic5Yy6' 22.517700 113.414300
+        New-District 'TorchDevelopmentZone' 'Torch Development Zone' '54Gr54Ks5byA5Y+R5Yy6' 22.560900 113.480500
     )
         New-City 'Dongguan' 'Dongguan' '5Lic6I6e' 23.020536 113.751765 @(
             New-District 'Nancheng' 'Nancheng' '5Y2X5Z+O' 23.020536 113.751765 'ProjectCityCoordinateFallback' 'City' '2026-06-26' $true
@@ -1217,6 +1308,54 @@ function New-XamlObject {
     return [System.Windows.Markup.XamlReader]::Parse($Xaml)
 }
 
+function New-WidgetGradientStop {
+    param([string]$Color, [double]$Offset)
+
+    return New-Object System.Windows.Media.GradientStop -ArgumentList @([System.Windows.Media.ColorConverter]::ConvertFromString($Color), $Offset)
+}
+
+function New-WidgetLinearGradientBrush {
+    param(
+        [double]$StartX,
+        [double]$StartY,
+        [double]$EndX,
+        [double]$EndY,
+        [object[]]$Stops
+    )
+
+    $brush = New-Object System.Windows.Media.LinearGradientBrush
+    $brush.StartPoint = New-Object System.Windows.Point -ArgumentList $StartX, $StartY
+    $brush.EndPoint = New-Object System.Windows.Point -ArgumentList $EndX, $EndY
+    foreach ($stop in $Stops) {
+        $brush.GradientStops.Add((New-WidgetGradientStop -Color ([string]$stop[0]) -Offset ([double]$stop[1]))) | Out-Null
+    }
+    if ($brush.CanFreeze) { $brush.Freeze() }
+    return $brush
+}
+
+function New-WidgetRadialGradientBrush {
+    param(
+        [double]$CenterX,
+        [double]$CenterY,
+        [double]$OriginX,
+        [double]$OriginY,
+        [double]$RadiusX,
+        [double]$RadiusY,
+        [object[]]$Stops
+    )
+
+    $brush = New-Object System.Windows.Media.RadialGradientBrush
+    $brush.Center = New-Object System.Windows.Point -ArgumentList $CenterX, $CenterY
+    $brush.GradientOrigin = New-Object System.Windows.Point -ArgumentList $OriginX, $OriginY
+    $brush.RadiusX = $RadiusX
+    $brush.RadiusY = $RadiusY
+    foreach ($stop in $Stops) {
+        $brush.GradientStops.Add((New-WidgetGradientStop -Color ([string]$stop[0]) -Offset ([double]$stop[1]))) | Out-Null
+    }
+    if ($brush.CanFreeze) { $brush.Freeze() }
+    return $brush
+}
+
 function New-GlowEffect {
     param(
         [string]$Color = '#000000',
@@ -1830,6 +1969,13 @@ function Move-ToDefaultPosition {
         $script:DrawerEdge = 'Left'
     }
 
+    $width = [Math]::Max([double]$script:WindowExpandedWidth, [double](Get-WindowActualWidth -Window $Window))
+    if ($script:DrawerEdge -eq 'Right') {
+        $Window.Left = [double]($area.Right - $width - 4)
+    } else {
+        $Window.Left = [double]($area.Left + 4)
+    }
+
     Set-DrawerEdgePosition -Window $Window -Expanded $script:DrawerExpanded
 }
 
@@ -2076,7 +2222,7 @@ function Update-DrawerHandleVisual {
 
     if ($script:DrawerEdge -eq 'Right') {
         $drawerHandle.HorizontalAlignment = 'Left'
-        $drawerHandle.CornerRadius = '12,0,0,12'
+        $drawerHandle.CornerRadius = 0
         $drawerHandleLineA.X1 = 15
         $drawerHandleLineA.Y1 = 10
         $drawerHandleLineA.X2 = 8
@@ -2087,7 +2233,7 @@ function Update-DrawerHandleVisual {
         $drawerHandleLineB.Y2 = 17
     } else {
         $drawerHandle.HorizontalAlignment = 'Right'
-        $drawerHandle.CornerRadius = '0,12,12,0'
+        $drawerHandle.CornerRadius = 0
         $drawerHandleLineA.X1 = 8
         $drawerHandleLineA.Y1 = 10
         $drawerHandleLineA.X2 = 15
@@ -2099,19 +2245,35 @@ function Update-DrawerHandleVisual {
     }
 }
 
-function Start-DrawerLeftAnimation {
+
+
+function Set-DrawerWindowLeft {
     param(
         [System.Windows.Window]$Window,
-        [double]$TargetLeft,
-        [bool]$Persist
+        [double]$Left
     )
 
     if ($null -eq $Window) {
         return
     }
 
-    $currentLeft = [double]$Window.GetValue([System.Windows.Window]::LeftProperty)
-    $Window.BeginAnimation([System.Windows.Window]::LeftProperty, $null)
+    $Window.Left = $Left
+}
+function Start-DrawerLeftAnimation {
+    param(
+        [System.Windows.Window]$Window,
+        [double]$TargetLeft,
+        [switch]$Persist
+    )
+
+    if ($null -eq $Window) {
+        return
+    }
+
+    $currentLeft = [double]$Window.Left
+    if ([double]::IsNaN($currentLeft)) {
+        $currentLeft = $TargetLeft
+    }
     $Window.Left = $currentLeft
 
     if ($script:ReduceMotion -or [Math]::Abs($currentLeft - $TargetLeft) -lt 0.5) {
@@ -2120,21 +2282,18 @@ function Start-DrawerLeftAnimation {
         $script:DrawerAnimationToken = $null
         Update-DrawerWindowState -Window $Window
         Update-DrawerHandleVisual
-        if ($Persist) {
-            Save-Settings
-        }
+        if ($Persist) { Save-Settings }
         return
     }
 
     $script:DrawerAnimationInProgress = $true
-    $animationToken = [Guid]::NewGuid().ToString('n')
+    $animationToken = [Guid]::NewGuid().ToString('N')
     $script:DrawerAnimationToken = $animationToken
 
     $animation = New-Object System.Windows.Media.Animation.DoubleAnimation
     $animation.From = $currentLeft
     $animation.To = $TargetLeft
     $animation.Duration = New-Object System.Windows.Duration -ArgumentList ([TimeSpan]::FromMilliseconds([double]$script:DrawerAnimationDurationMs))
-    $animation.FillBehavior = [System.Windows.Media.Animation.FillBehavior]::Stop
     $ease = New-Object System.Windows.Media.Animation.CubicEase
     $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
     $animation.EasingFunction = $ease
@@ -2142,15 +2301,12 @@ function Start-DrawerLeftAnimation {
         if ($script:DrawerAnimationToken -ne $animationToken) {
             return
         }
-        $Window.BeginAnimation([System.Windows.Window]::LeftProperty, $null)
         $Window.Left = $TargetLeft
         $script:DrawerAnimationInProgress = $false
         $script:DrawerAnimationToken = $null
         Update-DrawerWindowState -Window $Window
         Update-DrawerHandleVisual
-        if ($Persist) {
-            Save-Settings
-        }
+        if ($Persist) { Save-Settings }
     }.GetNewClosure())
 
     $Window.BeginAnimation(
@@ -2174,16 +2330,6 @@ function Set-WidgetWindowHeight {
     $targetHeight = Get-WidgetTargetHeight -SettingsOpen $SettingsOpen
     $targetHeight = [Math]::Min($targetHeight, [Math]::Max([double]$script:WindowMinHeight, [double]$area.Height - 54))
     $Window.Height = $targetHeight
-
-    if (@('Left', 'Right') -contains [string]$script:DrawerEdge) {
-        Set-DrawerEdgePosition -Window $Window -Expanded $script:DrawerExpanded
-        return
-    }
-
-    $gap = 4
-    $width = Get-WindowActualWidth -Window $Window
-    $Window.Top = Limit-Double -Value $Window.Top -Min ($area.Top + $gap) -Max ($area.Bottom - $targetHeight - $gap)
-    $Window.Left = Limit-Double -Value $Window.Left -Min ($area.Left + $gap) -Max ($area.Right - $width - $gap)
 }
 
 function Set-DrawerEdgePosition {
@@ -2207,9 +2353,6 @@ function Set-DrawerEdgePosition {
 
     Set-DrawerCollapsedVisualState -Window $Window -Collapsed (-not $Expanded)
     $area = Get-WindowWorkingArea -Window $Window
-    $height = Get-WindowActualHeight -Window $Window
-    $gap = 4
-    $Window.Top = Limit-Double -Value $Window.Top -Min ($area.Top + $gap) -Max ($area.Bottom - $height - $gap)
     $targetLeft = Get-DrawerTargetLeft -Window $Window -Area $area -Expanded $Expanded
 
     $script:DrawerAdjusting = $true
@@ -2221,7 +2364,7 @@ function Set-DrawerEdgePosition {
         } else {
             $script:DrawerAnimationToken = $null
             $Window.BeginAnimation([System.Windows.Window]::LeftProperty, $null)
-            $Window.Left = $targetLeft
+            Set-DrawerWindowLeft -Window $Window -Left $targetLeft
             $script:DrawerAnimationInProgress = $false
             Update-DrawerWindowState -Window $Window
             if ($Persist) {
@@ -2257,13 +2400,6 @@ function Update-DrawerDockAfterDrag {
         return
     }
 
-    $area = Get-WindowWorkingArea -Window $Window
-    $width = Get-WindowActualWidth -Window $Window
-    $height = Get-WindowActualHeight -Window $Window
-    $gap = 4
-
-    $Window.Top = Limit-Double -Value $Window.Top -Min ($area.Top + $gap) -Max ($area.Bottom - $height - $gap)
-    $Window.Left = Limit-Double -Value $Window.Left -Min ($area.Left + $gap) -Max ($area.Right - $width - $gap)
     $script:DrawerEdge = Get-NearestHorizontalDrawerEdge -Window $Window
     $script:DrawerExpanded = $true
     Update-DrawerWindowState -Window $Window
@@ -3260,7 +3396,14 @@ function New-WeatherIconElement {
         }
     }
 
-    return New-XamlObject $xaml
+    $canvas = New-XamlObject $xaml
+    $viewbox = New-Object System.Windows.Controls.Viewbox
+    $viewbox.Stretch = [System.Windows.Media.Stretch]::Uniform
+    $viewbox.StretchDirection = [System.Windows.Controls.StretchDirection]::Both
+    $viewbox.HorizontalAlignment = 'Stretch'
+    $viewbox.VerticalAlignment = 'Stretch'
+    $viewbox.Child = $canvas
+    return $viewbox
 }
 function ConvertTo-OpenMeteoForecastModel {
     param([object]$Weather)
@@ -3896,6 +4039,13 @@ function Get-WeatherUrls {
     }
 }
 
+function New-WeatherHttpClient {
+    $client = New-Object LonghuaWeatherTimeoutWebClient
+    $client.TimeoutMilliseconds = $script:WeatherRequestTimeoutMs
+    $client.Headers.Add('User-Agent', 'LonghuaWeatherWidget/2.0')
+    return $client
+}
+
 function Get-OpenMeteoForecastModel {
     $urls = Get-WeatherUrls
     $json = $script:Client.DownloadString($urls.OpenMeteo + '&_=' + [DateTimeOffset]::Now.ToUnixTimeSeconds())
@@ -3903,12 +4053,11 @@ function Get-OpenMeteoForecastModel {
     return ConvertTo-OpenMeteoForecastModel -Weather $weather
 }
 
-function Get-WttrForecastModel {
-    $urls = Get-WeatherUrls
-    $json = $script:Client.DownloadString($urls.Wttr + '&_=' + [DateTimeOffset]::Now.ToUnixTimeSeconds())
-    $weather = $json | ConvertFrom-Json
-    $current = @($weather.current_condition)[0]
-    $today = @($weather.weather)[0]
+function ConvertTo-WttrForecastModel {
+    param([object]$Weather)
+
+    $current = @($Weather.current_condition)[0]
+    $today = @($Weather.weather)[0]
     $hourly = @($today.hourly)
 
     $todayRain = 0.0
@@ -3992,6 +4141,13 @@ function Get-WttrForecastModel {
         AirQuality = $null
         RawText = $rawText
     }
+}
+
+function Get-WttrForecastModel {
+    $urls = Get-WeatherUrls
+    $json = $script:Client.DownloadString($urls.Wttr + '&_=' + [DateTimeOffset]::Now.ToUnixTimeSeconds())
+    $weather = $json | ConvertFrom-Json
+    return ConvertTo-WttrForecastModel -Weather $weather
 }
 
 function Get-UiSmokeCommand {
@@ -4179,9 +4335,11 @@ Load-Settings
 Reset-RefreshCountdown
 
 $window = New-Object System.Windows.Window
-$window.Title = if ($script:UiSmokeMode) { "LonghuaWeatherWidget-UiSmoke-$PID" } else { 'LonghuaWeatherWidget - Anthropic-inspired Edition' }
+$window.Title = if ($script:UiSmokeMode) { "PaperWeatherWidget-UiSmoke-$PID" } else { 'Paper Weather Widget' }
 $window.Width = $script:WindowExpandedWidth
 $window.Height = $script:WindowClosedHeight
+$window.SizeToContent = [System.Windows.SizeToContent]::Manual
+$window.WindowStartupLocation = [System.Windows.WindowStartupLocation]::Manual
 $window.WindowStyle = 'None'
 $window.ResizeMode = 'NoResize'
 $window.AllowsTransparency = $true
@@ -4193,13 +4351,7 @@ $border = New-Object System.Windows.Controls.Border
 $border.CornerRadius = 14
 $border.Padding = '12'
 $border.ClipToBounds = $true
-$border.Background = New-XamlObject @'
-<LinearGradientBrush xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" StartPoint="0,0" EndPoint="1,1">
-    <GradientStop Color="#FFFAF9F5" Offset="0"/>
-    <GradientStop Color="#FFF3F1EA" Offset="0.55"/>
-    <GradientStop Color="#FFFFFFFF" Offset="1"/>
-</LinearGradientBrush>
-'@
+$border.Background = New-WidgetLinearGradientBrush -StartX 0 -StartY 0 -EndX 1 -EndY 1 -Stops @(@('#FFFAF9F5', 0.0), @('#FFF3F1EA', 0.55), @('#FFFFFFFF', 1.0))
 $border.BorderBrush = '#00FFFFFF'
 $border.BorderThickness = 0
 $border.Effect = New-GlowEffect -Color '#D8D4C8' -BlurRadius 18 -ShadowDepth 4 -Opacity 0.18
@@ -4219,62 +4371,25 @@ $panelGlow.VerticalAlignment = 'Top'
 $panelGlow.Opacity = 0.18
 $panelGlow.IsHitTestVisible = $false
 $panelGlow.RenderTransform = $panelGlowTransform
-$panelGlow.Background = New-XamlObject @'
-<RadialGradientBrush xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.56" RadiusY="0.56">
-    <GradientStop Color="#55F3DED5" Offset="0"/>
-    <GradientStop Color="#22D8D4C8" Offset="0.42"/>
-    <GradientStop Color="#00FAF9F5" Offset="1"/>
-</RadialGradientBrush>
-'@
+$panelGlow.Background = New-WidgetRadialGradientBrush -CenterX 0.5 -CenterY 0.5 -OriginX 0.5 -OriginY 0.5 -RadiusX 0.56 -RadiusY 0.56 -Stops @(@('#55F3DED5', 0.0), @('#22D8D4C8', 0.42), @('#00FAF9F5', 1.0))
 $surfaceGrid.Children.Add($panelGlow) | Out-Null
 
 $panelSheen = New-Object System.Windows.Controls.Border
 $panelSheen.IsHitTestVisible = $false
 $panelSheen.Opacity = 0.26
-$panelSheen.Background = New-XamlObject @'
-<LinearGradientBrush xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" StartPoint="0,0" EndPoint="1,1">
-    <GradientStop Color="#66FFFFFF" Offset="0"/>
-    <GradientStop Color="#18D8D4C8" Offset="0.36"/>
-    <GradientStop Color="#00FAF9F5" Offset="1"/>
-</LinearGradientBrush>
-'@
+$panelSheen.Background = New-WidgetLinearGradientBrush -StartX 0 -StartY 0 -EndX 1 -EndY 1 -Stops @(@('#66FFFFFF', 0.0), @('#18D8D4C8', 0.36), @('#00FAF9F5', 1.0))
 $surfaceGrid.Children.Add($panelSheen) | Out-Null
 
 $rainLayer = New-Object System.Windows.Controls.Canvas
 $rainLayer.IsHitTestVisible = $false
 $rainLayer.Visibility = [System.Windows.Visibility]::Collapsed
 $rainLayer.Opacity = 0.0
-for ($i = 0; $i -lt 18; $i++) {
-    $streak = New-Object System.Windows.Controls.Border
-    $streak.Width = 1.2
-    $streak.Height = 42 + (($i % 4) * 8)
-    $streak.CornerRadius = 1
-    $streak.Opacity = 0.20 + (($i % 3) * 0.04)
-    $streak.Background = New-XamlObject @'
-<LinearGradientBrush xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" StartPoint="0,0" EndPoint="0,1">
-    <GradientStop Color="#00F5A7C7" Offset="0"/>
-    <GradientStop Color="#88D97757" Offset="0.45"/>
-    <GradientStop Color="#00F5A7C7" Offset="1"/>
-</LinearGradientBrush>
-'@
-    $streak.RenderTransform = New-Object System.Windows.Media.RotateTransform -ArgumentList 14
-    [System.Windows.Controls.Canvas]::SetLeft($streak, 18 + ($i * 21 % 340))
-    [System.Windows.Controls.Canvas]::SetTop($streak, -20 + ($i * 31 % 470))
-    $rainLayer.Children.Add($streak) | Out-Null
-}
 $surfaceGrid.Children.Add($rainLayer) | Out-Null
 
 $lightningLayer = New-Object System.Windows.Controls.Border
 $lightningLayer.IsHitTestVisible = $false
 $lightningLayer.Visibility = [System.Windows.Visibility]::Collapsed
 $lightningLayer.Opacity = 0.0
-$lightningLayer.Background = New-XamlObject @'
-<RadialGradientBrush xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Center="0.74,0.12" GradientOrigin="0.74,0.12" RadiusX="0.92" RadiusY="0.78">
-    <GradientStop Color="#B9FFFFFF" Offset="0"/>
-    <GradientStop Color="#42F3DED5" Offset="0.30"/>
-    <GradientStop Color="#00FAF9F5" Offset="1"/>
-</RadialGradientBrush>
-'@
 $surfaceGrid.Children.Add($lightningLayer) | Out-Null
 
 $scrollViewer = New-Object System.Windows.Controls.ScrollViewer
@@ -4289,7 +4404,7 @@ $drawerHandle = New-Object System.Windows.Controls.Border
 $drawerHandle.Width = Get-DrawerVisibleStrip
 $drawerHandle.Height = 92
 $drawerHandle.VerticalAlignment = 'Center'
-$drawerHandle.Background = '#F7D97757'
+$drawerHandle.Background = '#00FFFFFF'
 $drawerHandle.BorderBrush = '#00FFFFFF'
 $drawerHandle.BorderThickness = 0
 $drawerHandle.Cursor = [System.Windows.Input.Cursors]::Hand
@@ -4305,13 +4420,13 @@ $drawerHandleCanvas.Height = 34
 $drawerHandleCanvas.HorizontalAlignment = 'Center'
 $drawerHandleCanvas.VerticalAlignment = 'Center'
 $drawerHandleLineA = New-Object System.Windows.Shapes.Line
-$drawerHandleLineA.Stroke = '#FFFFFFFF'
-$drawerHandleLineA.StrokeThickness = 3
+$drawerHandleLineA.Stroke = '#D97757'
+$drawerHandleLineA.StrokeThickness = 2.4
 $drawerHandleLineA.StrokeStartLineCap = [System.Windows.Media.PenLineCap]::Round
 $drawerHandleLineA.StrokeEndLineCap = [System.Windows.Media.PenLineCap]::Round
 $drawerHandleLineB = New-Object System.Windows.Shapes.Line
-$drawerHandleLineB.Stroke = '#FFFFFFFF'
-$drawerHandleLineB.StrokeThickness = 3
+$drawerHandleLineB.Stroke = '#D97757'
+$drawerHandleLineB.StrokeThickness = 2.4
 $drawerHandleLineB.StrokeStartLineCap = [System.Windows.Media.PenLineCap]::Round
 $drawerHandleLineB.StrokeEndLineCap = [System.Windows.Media.PenLineCap]::Round
 $drawerHandleCanvas.Children.Add($drawerHandleLineA) | Out-Null
@@ -4372,16 +4487,6 @@ $border.Add_MouseLeave({
     $panelGlowTransform.X = 0
     $panelGlowTransform.Y = 0
 }.GetNewClosure())
-$border.Add_MouseLeftButtonDown({
-    param($sender, $eventArgs)
-    Start-WidgetWindowDrag -Window $window -EventArgs $eventArgs
-}.GetNewClosure())
-$widgetDragPreviewHandler = [System.Windows.Input.MouseButtonEventHandler]{
-    param($sender, $eventArgs)
-    Start-WidgetWindowDrag -Window $window -EventArgs $eventArgs
-}
-$border.AddHandler([System.Windows.UIElement]::PreviewMouseLeftButtonDownEvent, $widgetDragPreviewHandler, $true)
-
 $panel = New-Object System.Windows.Controls.StackPanel
 $scrollViewer.Content = $panel
 
@@ -4430,7 +4535,7 @@ function Set-TopChromePlain {
 
 $statusShell = New-Object System.Windows.Controls.Border
 $statusShell.Height = 23
-$statusShell.MinWidth = 48
+$statusShell.Width = 56
 $statusShell.CornerRadius = 12
 $statusShell.Padding = '9,1,9,2'
 $statusShell.Margin = '0,0,8,0'
@@ -4444,7 +4549,7 @@ $titleRow.Children.Add($statusShell) | Out-Null
 
 $countdownShell = New-Object System.Windows.Controls.Border
 $countdownShell.Height = 23
-$countdownShell.MinWidth = 76
+$countdownShell.Width = 92
 $countdownShell.CornerRadius = 12
 $countdownShell.Padding = '8,1,8,2'
 $countdownShell.Margin = '0,0,4,0'
@@ -4452,7 +4557,22 @@ $countdownShell.HorizontalAlignment = 'Right'
 Set-TopChromePlain -Border $countdownShell
 $countdownBlock = New-TextBlock -Text (Format-CountdownText -Seconds $script:RefreshSeconds) -FontSize 11 -Foreground '#6F6B60'
 $countdownBlock.HorizontalAlignment = 'Center'
-$countdownShell.Child = $countdownBlock
+$countdownHost = New-Object System.Windows.Controls.Grid
+$countdownShell.Child = $countdownHost
+$countdownHost.Children.Add($countdownBlock) | Out-Null
+$refreshTitleAutomationButton = New-Object System.Windows.Controls.Button
+$refreshTitleAutomationButton.Background = 'Transparent'
+$refreshTitleAutomationButton.BorderThickness = 0
+$refreshTitleAutomationButton.HorizontalAlignment = 'Stretch'
+$refreshTitleAutomationButton.VerticalAlignment = 'Stretch'
+$refreshTitleAutomationButton.Opacity = 0.01
+$refreshTitleAutomationButton.Focusable = $true
+$refreshTitleAutomationButton.Cursor = [System.Windows.Input.Cursors]::Hand
+$refreshTitleAutomationButton.ToolTip = Tx 'RefreshNow'
+Set-ControlAutomationId -Control $refreshTitleAutomationButton -AutomationId 'RefreshNowCard'
+Set-ControlAutomationName -Control $refreshTitleAutomationButton -Name (Tx 'RefreshNow')
+$refreshTitleAutomationButton.Add_Click({ Start-ManualWeatherRefresh -Reason 'RefreshCardClick' }.GetNewClosure())
+$countdownHost.Children.Add($refreshTitleAutomationButton) | Out-Null
 [System.Windows.Controls.Grid]::SetColumn($countdownShell, 2)
 $titleRow.Children.Add($countdownShell) | Out-Null
 
@@ -4785,6 +4905,24 @@ $infoGrid.Children.Add($locationInfoCard.Grid) | Out-Null
 
 $refreshInfoCard = New-InfoCard -Label (Tx 'Refresh') -Value (Get-RefreshLabel -Seconds $script:RefreshSeconds) -Height 40
 $refreshInfoCard.Grid.Margin = '0,0,4,0'
+$refreshCardContent = $refreshInfoCard.Grid.Child
+$refreshCardHost = New-Object System.Windows.Controls.Grid
+$refreshInfoCard.Grid.Child = $refreshCardHost
+$refreshCardHost.Children.Add($refreshCardContent) | Out-Null
+$refreshAutomationButton = New-Object System.Windows.Controls.Button
+$refreshAutomationButton.Background = 'Transparent'
+$refreshAutomationButton.BorderThickness = 0
+$refreshAutomationButton.HorizontalAlignment = 'Stretch'
+$refreshAutomationButton.VerticalAlignment = 'Stretch'
+$refreshAutomationButton.Opacity = 0.01
+$refreshAutomationButton.Focusable = $true
+$refreshAutomationButton.Cursor = [System.Windows.Input.Cursors]::Hand
+$refreshAutomationButton.ToolTip = Tx 'RefreshNow'
+Set-ControlAutomationId -Control $refreshAutomationButton -AutomationId 'RefreshNowCard'
+Set-ControlAutomationId -Control $refreshInfoCard.Value -AutomationId 'RefreshNowCard'
+Set-ControlAutomationName -Control $refreshAutomationButton -Name (Tx 'RefreshNow')
+$refreshAutomationButton.Add_Click({ Start-ManualWeatherRefresh -Reason 'RefreshCardClick' }.GetNewClosure())
+$refreshCardHost.Children.Add($refreshAutomationButton) | Out-Null
 [System.Windows.Controls.Grid]::SetColumn($refreshInfoCard.Grid, 0)
 [System.Windows.Controls.Grid]::SetRow($refreshInfoCard.Grid, 1)
 $infoGrid.Children.Add($refreshInfoCard.Grid) | Out-Null
@@ -5010,7 +5148,7 @@ $conditionLayout = New-Object System.Windows.Controls.Grid
 $conditionTextColumn = New-Object System.Windows.Controls.ColumnDefinition
 $conditionTextColumn.Width = '*'
 $conditionIconColumn = New-Object System.Windows.Controls.ColumnDefinition
-$conditionIconColumn.Width = '64'
+$conditionIconColumn.Width = '86'
 $conditionLayout.ColumnDefinitions.Add($conditionTextColumn)
 $conditionLayout.ColumnDefinitions.Add($conditionIconColumn)
 $conditionMainRow = New-Object System.Windows.Controls.RowDefinition
@@ -5047,10 +5185,10 @@ $feelsBlock = New-TextBlock -Text '--' -FontSize 12 -Foreground '#6F6B60'
 $conditionPanel.Children.Add($feelsBlock) | Out-Null
 
 $weatherIconShell = New-Object System.Windows.Controls.Border
-$weatherIconShell.Width = 54
-$weatherIconShell.Height = 54
-$weatherIconShell.CornerRadius = 16
-$weatherIconShell.Padding = '3'
+$weatherIconShell.Width = 74
+$weatherIconShell.Height = 74
+$weatherIconShell.CornerRadius = 20
+$weatherIconShell.Padding = '0'
 $weatherIconShell.HorizontalAlignment = 'Right'
 $weatherIconShell.VerticalAlignment = 'Center'
 $weatherIconShell.Background = '#FFFAF9F5'
@@ -5091,20 +5229,9 @@ $alertGrid.Children.Add($alertTextBlock) | Out-Null
 [System.Windows.Controls.Grid]::SetRow($alertStrip, 1)
 $conditionLayout.Children.Add($alertStrip) | Out-Null
 
+# Keep the weather card static; hover transforms made the window look like it was shaking.
 $conditionCard.Add_MouseMove({
-    param($sender, $eventArgs)
-    if ($script:ReduceMotion) {
-        return
-    }
-    $point = $eventArgs.GetPosition($conditionCard)
-    $width = [Math]::Max(1, $conditionCard.ActualWidth)
-    $height = [Math]::Max(1, $conditionCard.ActualHeight)
-    $conditionScale.ScaleX = 1.012
-    $conditionScale.ScaleY = 1.012
-    $conditionTranslate.Y = -2
-    $conditionRotate.Angle = (($point.X / $width) - 0.5) * 1.6
-    $conditionSkew.AngleX = -(($point.Y / $height) - 0.5) * 1.8
-    $conditionSkew.AngleY = (($point.X / $width) - 0.5) * 1.4
+    return
 }.GetNewClosure())
 $conditionCard.Add_MouseLeave({
     $conditionScale.ScaleX = 1
@@ -5182,6 +5309,7 @@ Set-ControlAutomationId -Control $provinceCombo -AutomationId 'ProvinceSelector'
 Set-ControlAutomationId -Control $cityCombo -AutomationId 'CitySelector'
 Set-ControlAutomationId -Control $districtCombo -AutomationId 'DistrictSelector'
 Set-ControlAutomationId -Control $refreshCombo -AutomationId 'RefreshIntervalSelector'
+Set-ControlAutomationId -Control $refreshAutomationButton -AutomationId 'RefreshNowCard'
 Set-ControlAutomationId -Control $forecastDateCombo -AutomationId 'ForecastStartSelector'
 Set-ControlAutomationId -Control $forecastHourCombo -AutomationId 'ForecastEndSelector'
 Set-ControlAutomationId -Control $languageInfoCard.Value -AutomationId 'LanguageStatusText'
@@ -5215,9 +5343,7 @@ $window.Content = $border
 Set-UiSmokeItemStatus -State 'Idle' -LocationKey (Get-SelectedLocationKey) -RequestId $script:ActiveWeatherRequestId
 $exitItem.Add_Click({ $window.Close() })
 
-$script:Client = New-Object LonghuaWeatherTimeoutWebClient
-$script:Client.TimeoutMilliseconds = $script:WeatherRequestTimeoutMs
-$script:Client.Headers.Add('User-Agent', 'LonghuaWeatherWidget/2.0')
+$script:Client = New-WeatherHttpClient
 
 function Update-LanguagePill {
     $zhText.Text = Tx 'Chinese'
@@ -5250,7 +5376,7 @@ function Update-InfoCards {
     $locationInfoCard.Grid.ToolTip = Tx 'Settings'
     $refreshInfoCard.Label.Text = Tx 'Refresh'
     $refreshInfoCard.Value.Text = Get-RefreshLabel -Seconds $script:RefreshSeconds
-    $refreshInfoCard.Grid.ToolTip = Tx 'Settings'
+    $refreshInfoCard.Grid.ToolTip = Tx 'RefreshNow'
     $languageInfoCard.Label.Text = Tx 'Language'
     $languageInfoCard.Value.Text = Get-LanguageCardText
     $languageInfoCard.Grid.ToolTip = Tx 'Settings'
@@ -5316,7 +5442,9 @@ function Update-ForecastControls {
 }
 
 function Update-ForecastChips {
-    Update-ForecastControls
+    if ($script:SettingsCombosInitialized) {
+        Update-ForecastControls
+    }
 
     if ($null -eq $script:ForecastChips) {
         return
@@ -5330,6 +5458,60 @@ function Update-ForecastChips {
         $chip.Text.Text = Tx $definition.LabelKey
         Set-ForecastChipVisual -Chip $chip -Selected ($script:SelectedForecastSlotKey -eq $definition.Key)
     }
+}
+
+function New-RainStreakBrush {
+    $brush = New-Object System.Windows.Media.LinearGradientBrush
+    $brush.StartPoint = New-Object System.Windows.Point -ArgumentList 0, 0
+    $brush.EndPoint = New-Object System.Windows.Point -ArgumentList 0, 1
+    $brush.GradientStops.Add((New-Object System.Windows.Media.GradientStop -ArgumentList @([System.Windows.Media.ColorConverter]::ConvertFromString('#00F5A7C7'), 0.0))) | Out-Null
+    $brush.GradientStops.Add((New-Object System.Windows.Media.GradientStop -ArgumentList @([System.Windows.Media.ColorConverter]::ConvertFromString('#88D97757'), 0.45))) | Out-Null
+    $brush.GradientStops.Add((New-Object System.Windows.Media.GradientStop -ArgumentList @([System.Windows.Media.ColorConverter]::ConvertFromString('#00F5A7C7'), 1.0))) | Out-Null
+    if ($brush.CanFreeze) { $brush.Freeze() }
+    return $brush
+}
+
+function New-LightningLayerBrush {
+    $brush = New-Object System.Windows.Media.RadialGradientBrush
+    $brush.Center = New-Object System.Windows.Point -ArgumentList 0.74, 0.12
+    $brush.GradientOrigin = New-Object System.Windows.Point -ArgumentList 0.74, 0.12
+    $brush.RadiusX = 0.92
+    $brush.RadiusY = 0.78
+    $brush.GradientStops.Add((New-Object System.Windows.Media.GradientStop -ArgumentList @([System.Windows.Media.ColorConverter]::ConvertFromString('#B9FFFFFF'), 0.0))) | Out-Null
+    $brush.GradientStops.Add((New-Object System.Windows.Media.GradientStop -ArgumentList @([System.Windows.Media.ColorConverter]::ConvertFromString('#42F3DED5'), 0.30))) | Out-Null
+    $brush.GradientStops.Add((New-Object System.Windows.Media.GradientStop -ArgumentList @([System.Windows.Media.ColorConverter]::ConvertFromString('#00FAF9F5'), 1.0))) | Out-Null
+    if ($brush.CanFreeze) { $brush.Freeze() }
+    return $brush
+}
+
+function Ensure-RainLayerVisuals {
+    if ($script:RainLayerInitialized -or $null -eq $rainLayer) {
+        return
+    }
+
+    $streakBrush = New-RainStreakBrush
+    for ($i = 0; $i -lt 18; $i++) {
+        $streak = New-Object System.Windows.Controls.Border
+        $streak.Width = 1.2
+        $streak.Height = 42 + (($i % 4) * 8)
+        $streak.CornerRadius = 1
+        $streak.Opacity = 0.20 + (($i % 3) * 0.04)
+        $streak.Background = $streakBrush
+        $streak.RenderTransform = New-Object System.Windows.Media.RotateTransform -ArgumentList 14
+        [System.Windows.Controls.Canvas]::SetLeft($streak, 18 + ($i * 21 % 340))
+        [System.Windows.Controls.Canvas]::SetTop($streak, -20 + ($i * 31 % 470))
+        $rainLayer.Children.Add($streak) | Out-Null
+    }
+    $script:RainLayerInitialized = $true
+}
+
+function Ensure-LightningLayerVisual {
+    if ($script:LightningLayerInitialized -or $null -eq $lightningLayer) {
+        return
+    }
+
+    $lightningLayer.Background = New-LightningLayerBrush
+    $script:LightningLayerInitialized = $true
 }
 
 function Set-WidgetGradient {
@@ -5374,6 +5556,8 @@ function Apply-WeatherAmbience {
     }
 
     if ($Snapshot.IsThunderstorm) {
+        Ensure-RainLayerVisuals
+        Ensure-LightningLayerVisual
         Set-WidgetGradient -StartColor '#FFFAF9F5' -MidColor '#FFF3DED5' -EndColor '#FFFFFFFF' -GlowColor '#70D97757' -GlowOpacity 0.22
         $rainLayer.Visibility = [System.Windows.Visibility]::Visible
         $rainLayer.Opacity = 0.20
@@ -5383,6 +5567,7 @@ function Apply-WeatherAmbience {
     }
 
     if ($Snapshot.IsRainingNow) {
+        Ensure-RainLayerVisuals
         Set-WidgetGradient -StartColor '#FFFAF9F5' -MidColor '#FFF3F1EA' -EndColor '#FFFFFFFF' -GlowColor '#556A9BCC' -GlowOpacity 0.20
         $rainLayer.Visibility = [System.Windows.Visibility]::Visible
         $rainLayer.Opacity = 0.16
@@ -5541,6 +5726,7 @@ function Set-SettingsPanelOpen {
 
     $script:SettingsOpen = $Open
     if ($Open) {
+        Ensure-SettingsCombosInitialized
         $settingsPanel.Visibility = [System.Windows.Visibility]::Visible
         Set-TopChromePlain -Border $settingsButton
         Set-SettingsIconExpanded -Expanded $true
@@ -5593,6 +5779,39 @@ function Refresh-DistrictCombo {
     Select-ComboItem -Combo $districtCombo -Property 'Key' -Value $script:SelectedDistrictKey
 }
 
+function Refresh-RefreshIntervalCombo {
+    $refreshCombo.Items.Clear()
+    foreach ($seconds in @(60, 3600, 86400)) {
+        $refreshCombo.Items.Add([pscustomobject]@{
+            Key = [string]$seconds
+            Seconds = $seconds
+            Display = Get-RefreshLabel -Seconds $seconds
+        }) | Out-Null
+    }
+    Select-ComboItem -Combo $refreshCombo -Property 'Seconds' -Value $script:RefreshSeconds
+}
+
+function Refresh-SettingsComboItems {
+    Refresh-ProvinceCombo
+    Refresh-CityCombo
+    Refresh-DistrictCombo
+    Refresh-RefreshIntervalCombo
+    Update-ForecastControls
+}
+
+function Ensure-SettingsCombosInitialized {
+    if ($script:SettingsCombosInitialized) { return }
+
+    $wasUpdatingControls = $script:UpdatingControls
+    $script:UpdatingControls = $true
+    try {
+        Refresh-SettingsComboItems
+        $script:SettingsCombosInitialized = $true
+    } finally {
+        $script:UpdatingControls = $wasUpdatingControls
+    }
+}
+
 function Refresh-ControlText {
     $script:UpdatingControls = $true
     try {
@@ -5636,19 +5855,9 @@ function Refresh-ControlText {
             $modeBlock.Text = Tx 'Now'
         }
 
-        Refresh-ProvinceCombo
-        Refresh-CityCombo
-        Refresh-DistrictCombo
-
-        $refreshCombo.Items.Clear()
-        foreach ($seconds in @(60, 3600, 86400)) {
-            $refreshCombo.Items.Add([pscustomobject]@{
-                Key = [string]$seconds
-                Seconds = $seconds
-                Display = Get-RefreshLabel -Seconds $seconds
-            }) | Out-Null
+        if ($script:SettingsCombosInitialized) {
+            Refresh-SettingsComboItems
         }
-        Select-ComboItem -Combo $refreshCombo -Property 'Seconds' -Value $script:RefreshSeconds
         Update-LanguagePill
         Update-ForecastChips
         Update-InfoCards
@@ -5769,9 +5978,252 @@ $timer = New-Object System.Windows.Threading.DispatcherTimer
     Update-Weather
 }
 
+function Complete-WeatherRefreshSuccess {
+    param(
+        [object]$Request,
+        [object]$Model
+    )
+
+    $result = Resolve-WeatherRequestSuccess -Request $Request -Model $Model
+    if (-not $result.ShouldApply) {
+        if ($result.Status -eq 'LocationMismatch' -and (Test-WeatherRequestIsCurrent -Request $Request)) {
+            Set-WeatherUnavailableState -ErrorMessage 'Weather response location mismatch.'
+        }
+        return
+    }
+
+    $snapshot = Get-WeatherSnapshotFromModel -Model $result.Model -SlotKey $script:SelectedForecastSlotKey
+    Update-WeatherDisplay -Snapshot $snapshot
+}
+
+function Complete-WeatherRefreshFailure {
+    param(
+        [object]$Request,
+        [string]$ErrorMessage = ''
+    )
+
+    $result = Resolve-WeatherRequestFailure -Request $Request -ErrorMessage $ErrorMessage
+    if (-not $result.ShouldApply) {
+        return
+    }
+
+    if ($result.UseCache -and $null -ne $result.Model) {
+        try {
+            $snapshot = Get-WeatherSnapshotFromModel -Model $result.Model -SlotKey $script:SelectedForecastSlotKey
+            Update-WeatherDisplay -Snapshot $snapshot
+            $nearTermBlock.Text = Format-CachedNearTermForecastText -Text $snapshot.NearTermForecast -FetchedAt $result.CacheEntry.FetchedAt
+            Update-WeatherVisualUi -Snapshot $snapshot -Offline
+            $script:CurrentStatusKey = 'Offline'
+            $statusBlock.Text = Tx 'Offline'
+            $statusBlock.Foreground = '#B5473C'
+            Set-TopChromePlain -Border $statusShell
+            $updatedBlock.Text = '{0} {1} | {2} {3}' -f (Tx 'LastTry'), (Get-Date -Format 'HH:mm:ss'), (Tx 'CachedData'), $result.CacheEntry.FetchedAt.ToString('HH:mm:ss')
+            $updatedBlock.ToolTip = $ErrorMessage
+            return
+        } catch {
+            Set-WeatherUnavailableState -ErrorMessage $_.Exception.Message
+            return
+        }
+    }
+
+    Set-WeatherUnavailableState -ErrorMessage $ErrorMessage
+}
+
+function Stop-WeatherAsyncState {
+    param(
+        [object]$State,
+        [switch]$Cancel
+    )
+
+    if ($null -eq $State) { return }
+    if ($null -ne $State.Timer) {
+        try { $State.Timer.Stop() } catch {}
+    }
+    if ($null -ne $State.Client) {
+        if ($Cancel) {
+            try { $State.Client.CancelAsync() } catch {}
+        }
+        try { $State.Client.Dispose() } catch {}
+    }
+}
+
+function Complete-WeatherRefreshLifecycle {
+    param([object]$Request)
+
+    $restartPending = [bool]$script:PendingWeatherRefresh
+    $script:WeatherRefreshInProgress = $false
+    $script:PendingWeatherRefresh = $false
+    $script:ActiveWeatherRefreshState = $null
+
+    if ($null -ne $Request -and $Request.RequestId -eq $script:ActiveWeatherRequestId) {
+        Reset-RefreshCountdown
+    }
+
+    if ($restartPending -and $null -ne $window) {
+        [void]$window.Dispatcher.BeginInvoke([Action]{ Update-Weather })
+    }
+}
+
+function Finish-WeatherAsyncRefresh {
+    param([object]$State)
+
+    $request = if ($null -ne $State) { $State.Request } else { $null }
+    Stop-WeatherAsyncState -State $State
+    Complete-WeatherRefreshLifecycle -Request $request
+}
+
+function Start-WeatherAsyncAttempt {
+    param(
+        [object]$State,
+        [ValidateSet('OpenMeteo', 'Wttr')]
+        [string]$Attempt
+    )
+
+    if ($null -ne $State.Client) {
+        try { $State.Client.Dispose() } catch {}
+    }
+
+    $cacheBust = [DateTimeOffset]::Now.ToUnixTimeSeconds()
+    $url = if ($Attempt -eq 'OpenMeteo') {
+        $State.Urls.OpenMeteo + '&_=' + $cacheBust
+    } else {
+        $State.Urls.Wttr + '&_=' + $cacheBust
+    }
+
+    $State.Attempt = $Attempt
+    $State.Client = New-WeatherHttpClient
+    $State.Task = $State.Client.DownloadStringTaskAsync([Uri]$url)
+}
+
+function Get-WeatherAsyncTaskResult {
+    param([object]$Task)
+
+    if ($null -eq $Task) {
+        throw 'Weather request was not started.'
+    }
+    if ($Task.IsCanceled) {
+        throw 'Weather request was canceled.'
+    }
+    if ($Task.IsFaulted) {
+        if ($null -ne $Task.Exception) {
+            throw $Task.Exception.GetBaseException().Message
+        }
+        throw 'Weather request failed.'
+    }
+
+    return [string]$Task.Result
+}
+
+function Invoke-WeatherAsyncPoll {
+    param([object]$State)
+
+    if ($null -eq $State -or $null -eq $State.Task -or -not $State.Task.IsCompleted) {
+        return
+    }
+
+    if ($null -ne $State.Timer) {
+        $State.Timer.Stop()
+    }
+
+    $request = $State.Request
+    if (-not (Test-WeatherRequestIsCurrent -Request $request)) {
+        Finish-WeatherAsyncRefresh -State $State
+        return
+    }
+
+    try {
+        $json = Get-WeatherAsyncTaskResult -Task $State.Task
+        if ($State.Attempt -eq 'OpenMeteo') {
+            $weather = $json | ConvertFrom-Json
+            $model = ConvertTo-OpenMeteoForecastModel -Weather $weather
+        } else {
+            $weather = $json | ConvertFrom-Json
+            $model = ConvertTo-WttrForecastModel -Weather $weather
+        }
+        Complete-WeatherRefreshSuccess -Request $request -Model $model
+        Finish-WeatherAsyncRefresh -State $State
+    } catch {
+        $refreshError = $_.Exception.Message
+        if ($State.Attempt -eq 'OpenMeteo' -and (Test-WeatherRequestIsCurrent -Request $request)) {
+            $State.LastError = $refreshError
+            try {
+                Start-WeatherAsyncAttempt -State $State -Attempt 'Wttr'
+                if ($null -ne $State.Timer) { $State.Timer.Start() }
+                return
+            } catch {
+                $refreshError = $_.Exception.Message
+            }
+        }
+
+        Complete-WeatherRefreshFailure -Request $request -ErrorMessage $refreshError
+        Finish-WeatherAsyncRefresh -State $State
+    }
+}
+
+function Start-WeatherRefreshAsync {
+    param([object]$Request)
+
+    $state = [pscustomobject]@{
+        Request = $Request
+        Attempt = ''
+        Urls = $null
+        Client = $null
+        Task = $null
+        Timer = $null
+        LastError = ''
+        SmokeTimer = $null
+    }
+
+    if ($script:UiSmokeMode -and [string]$script:UiFixture -ne 'Live') {
+        $timer = New-Object System.Windows.Threading.DispatcherTimer
+        $timer.Interval = [TimeSpan]::FromMilliseconds([Math]::Max(1, [int]$script:UiSmokeDelayMs))
+        $state.SmokeTimer = $timer
+        $state.Timer = $timer
+        $script:ActiveWeatherRefreshState = $state
+        $timer.Add_Tick({
+            param($sender, $eventArgs)
+            $sender.Stop()
+            try {
+                if (Test-WeatherRequestIsCurrent -Request $state.Request) {
+                    $model = Get-WeatherModel
+                    Complete-WeatherRefreshSuccess -Request $state.Request -Model $model
+                }
+            } catch {
+                Complete-WeatherRefreshFailure -Request $state.Request -ErrorMessage $_.Exception.Message
+            } finally {
+                Finish-WeatherAsyncRefresh -State $state
+            }
+        }.GetNewClosure())
+        $timer.Start()
+        return
+    }
+
+    $timer = New-Object System.Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds(100)
+    $timer.Add_Tick({ Invoke-WeatherAsyncPoll -State $state }.GetNewClosure())
+    $state.Timer = $timer
+    $script:ActiveWeatherRefreshState = $state
+    $state.Urls = Get-WeatherUrls
+    Start-WeatherAsyncAttempt -State $state -Attempt 'OpenMeteo'
+    $timer.Start()
+}
+
+function Start-ManualWeatherRefresh {
+    param([string]$Reason = 'Manual')
+
+    $script:LastWeatherRefreshTrigger = $Reason
+    $script:ManualWeatherRefreshInvokeCount++
+    Write-UiSmokeCommandTrace -Event 'ManualRefresh' -Command ([ordered]@{
+        Reason = $Reason
+        Count = $script:ManualWeatherRefreshInvokeCount
+    })
+    Update-Weather
+}
+
 function Update-Weather {
     $request = Start-WeatherRequestContext
     $hadCurrentLocationModel = ($null -ne $script:LatestWeatherModel -and $script:LatestWeatherLocationKey -eq $request.LocationKey)
+    $startedAsync = $false
 
     try {
         $script:CurrentStatusKey = 'Updating'
@@ -5782,60 +6234,31 @@ function Update-Weather {
         if (-not $hadCurrentLocationModel) {
             Set-WeatherLoadingState
         }
-        [System.Windows.Forms.Application]::DoEvents()
-        if ($script:UiSmokeMode -and $script:UiSmokeDelayMs -gt 0) {
-            Start-Sleep -Milliseconds $script:UiSmokeDelayMs
-            [System.Windows.Forms.Application]::DoEvents()
+
+        if ($script:WeatherRefreshInProgress) {
+            $script:PendingWeatherRefresh = $true
+            if ($null -ne $script:ActiveWeatherRefreshState -and $null -ne $script:ActiveWeatherRefreshState.Client) {
+                try { $script:ActiveWeatherRefreshState.Client.CancelAsync() } catch {}
+            }
+            return
         }
 
         if (-not (Test-WeatherRequestIsCurrent -Request $request)) {
             return
         }
 
-        $model = Get-WeatherModel
-        $result = Resolve-WeatherRequestSuccess -Request $request -Model $model
-        if (-not $result.ShouldApply) {
-            if ($result.Status -eq 'LocationMismatch' -and (Test-WeatherRequestIsCurrent -Request $request)) {
-                Set-WeatherUnavailableState -ErrorMessage 'Weather response location mismatch.'
-            }
-            return
-        }
-
-        $snapshot = Get-WeatherSnapshotFromModel -Model $result.Model -SlotKey $script:SelectedForecastSlotKey
-        Update-WeatherDisplay -Snapshot $snapshot
+        $script:WeatherRefreshInProgress = $true
+        $script:PendingWeatherRefresh = $false
+        Start-WeatherRefreshAsync -Request $request
+        $startedAsync = $true
     } catch {
-        $refreshError = $_.Exception.Message
-        $result = Resolve-WeatherRequestFailure -Request $request -ErrorMessage $refreshError
-        if (-not $result.ShouldApply) {
-            return
-        }
-
-        if ($result.UseCache -and $null -ne $result.Model) {
-            try {
-                $snapshot = Get-WeatherSnapshotFromModel -Model $result.Model -SlotKey $script:SelectedForecastSlotKey
-                Update-WeatherDisplay -Snapshot $snapshot
-                $nearTermBlock.Text = Format-CachedNearTermForecastText -Text $snapshot.NearTermForecast -FetchedAt $result.CacheEntry.FetchedAt
-                Update-WeatherVisualUi -Snapshot $snapshot -Offline
-                $script:CurrentStatusKey = 'Offline'
-                $statusBlock.Text = Tx 'Offline'
-                $statusBlock.Foreground = '#B5473C'
-                Set-TopChromePlain -Border $statusShell
-                $updatedBlock.Text = '{0} {1} | {2} {3}' -f (Tx 'LastTry'), (Get-Date -Format 'HH:mm:ss'), (Tx 'CachedData'), $result.CacheEntry.FetchedAt.ToString('HH:mm:ss')
-                $updatedBlock.ToolTip = $refreshError
-                return
-            } catch {
-                Set-WeatherUnavailableState -ErrorMessage $_.Exception.Message
-                return
-            }
-        }
-
-        Set-WeatherUnavailableState -ErrorMessage $refreshError
-    } finally {
-        if ($request.RequestId -eq $script:ActiveWeatherRequestId) {
-            Reset-RefreshCountdown
+        Complete-WeatherRefreshFailure -Request $request -ErrorMessage $_.Exception.Message
+        if (-not $startedAsync) {
+            Complete-WeatherRefreshLifecycle -Request $request
         }
     }
 }
+
 $provinceCombo.Add_SelectionChanged({
     if ($script:UpdatingControls -or $null -eq $provinceCombo.SelectedItem) {
         return
@@ -5887,7 +6310,7 @@ $refreshCombo.Add_SelectionChanged({
 
     Set-RefreshInterval -Seconds ([int]$refreshCombo.SelectedItem.Seconds)
     Save-Settings
-    Update-Weather
+    Start-ManualWeatherRefresh -Reason 'IntervalChanged'
 })
 
 $forecastDateCombo.Add_SelectionChanged({
@@ -5984,13 +6407,13 @@ $locationInfoCard.Grid.Add_KeyDown({
 $refreshInfoCard.Grid.Add_MouseLeftButtonUp({
     param($sender, $eventArgs)
     $eventArgs.Handled = $true
-    Toggle-SettingsPanel
+    Start-ManualWeatherRefresh -Reason 'RefreshCardClick'
 })
 $refreshInfoCard.Grid.Add_KeyDown({
     param($sender, $eventArgs)
     if ($eventArgs.Key -eq [System.Windows.Input.Key]::Enter -or $eventArgs.Key -eq [System.Windows.Input.Key]::Space) {
         $eventArgs.Handled = $true
-        Toggle-SettingsPanel
+        Start-ManualWeatherRefresh -Reason 'RefreshCardKey'
     }
 })
 $languageInfoCard.Grid.Add_MouseLeftButtonUp({
@@ -6093,7 +6516,7 @@ function Invoke-UiSmokeControlCommand {
         }
         'Refresh' {
             Write-UiSmokeCommandTrace -Event 'Refresh' -Command $command
-            Update-Weather
+            Start-ManualWeatherRefresh -Reason 'UiSmokeCommand'
         }
         'Language' {
             Write-UiSmokeCommandTrace -Event 'Language' -Command $command
@@ -6123,7 +6546,7 @@ function Invoke-UiSmokeControlCommand {
         }
     }
 }
-$refreshItem.Add_Click({ Update-Weather })
+$refreshItem.Add_Click({ Start-ManualWeatherRefresh -Reason 'ContextMenu' })
 
 $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds($script:RefreshSeconds)
@@ -6160,12 +6583,11 @@ $initialRefreshTimer.Add_Tick({
 
 Refresh-ControlText
 
-$window.Add_SourceInitialized({
-    Move-ToDefaultPosition -Window $window
-})
+Move-ToDefaultPosition -Window $window
 
 $window.Add_Closing({
     Update-DrawerWindowState -Window $window
+    Stop-WeatherAsyncState -State $script:ActiveWeatherRefreshState -Cancel
     Save-Settings
 })
 

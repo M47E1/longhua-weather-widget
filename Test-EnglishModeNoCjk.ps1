@@ -63,7 +63,7 @@ function Find-WindowByPid {
             if ([int]$windowProcessId -eq $ProcessId -and [EnglishNoCjkWin32]::IsWindowVisible($h)) {
                 $sb = New-Object System.Text.StringBuilder 512
                 [EnglishNoCjkWin32]::GetWindowText($h, $sb, $sb.Capacity) | Out-Null
-                if ($sb.ToString() -match 'LonghuaWeatherWidget|Basic Weather Widget') { $script:FoundHwnd = $h; return $false }
+                if ($sb.ToString() -match 'LonghuaWeatherWidget|AnthropicWeatherWidget|PaperWeatherWidget|Basic Weather Widget|Anthropic Weather Widget|Paper Weather Widget') { $script:FoundHwnd = $h; return $false }
             }
             return $true
         }
@@ -233,7 +233,8 @@ try {
     $matches = [regex]::Matches($allText, '[\u3400-\u9FFF\uF900-\uFAFF]') | ForEach-Object { $_.Value } | Select-Object -Unique
     $report.CjkMatches = @($matches)
     if (@($matches).Count -gt 0) { throw ('English UI contains CJK characters: ' + (@($matches) -join '')) }
-    if ($report.Texts['LocationTitle'] -ne 'Jiangsu · Suzhou · Industrial Park') { throw ('Unexpected English location title: ' + $report.Texts['LocationTitle']) }
+    $expectedLocationTitle = ('Jiangsu {0} Suzhou {0} Industrial Park' -f [char]0x00B7)
+    if ([string]$report.Texts['LocationTitle'] -ne $expectedLocationTitle) { throw ('Unexpected English location title: ' + $report.Texts['LocationTitle']) }
     $report.Result = 'PASS'
 } catch {
     $report.Error = $_.Exception.Message

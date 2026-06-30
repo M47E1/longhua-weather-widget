@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 param(
-    [string]$Version = '1.1.0',
+    [string]$Version = '1.3.0',
     [switch]$SkipPs2ExeDownload
 )
 
@@ -28,8 +28,11 @@ if (-not $distFullPath.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCa
     throw "Refusing to clean dist outside repo: $distFullPath"
 }
 
-$exeName = "LonghuaWeatherWidget-v$Version-anthropic-win-x64.exe"
-$zipName = "LonghuaWeatherWidget-v$Version-anthropic-win-x64.zip"
+$productName = 'Paper Weather Widget'
+$assetBaseName = "PaperWeatherWidget-v$Version-win-x64"
+$packageExeName = 'PaperWeatherWidget.exe'
+$exeName = "$assetBaseName.exe"
+$zipName = "$assetBaseName.zip"
 $exePath = Join-Path $distDir $exeName
 $zipPath = Join-Path $distDir $zipName
 $shaPath = Join-Path $distDir 'SHA256SUMS.txt'
@@ -40,6 +43,14 @@ function Import-PS2EXEForBuild {
     $command = Get-Command Invoke-PS2EXE -ErrorAction SilentlyContinue
     if ($null -ne $command) {
         return
+    }
+
+    $moduleRoot = Join-Path ([IO.Path]::GetTempPath()) 'LonghuaWeatherWidget-build-modules'
+    if (Test-Path -LiteralPath $moduleRoot) {
+        $modulePaths = @($env:PSModulePath -split [regex]::Escape([string][IO.Path]::PathSeparator))
+        if ($modulePaths -notcontains $moduleRoot) {
+            $env:PSModulePath = $moduleRoot + [IO.Path]::PathSeparator + $env:PSModulePath
+        }
     }
 
     $existingModule = Get-Module -ListAvailable -Name ps2exe | Select-Object -First 1
@@ -78,6 +89,7 @@ if (Test-Path -LiteralPath $distDir) {
 New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 
 $fileVersion = "$Version.0"
+$iconPath = Join-Path $repoRoot 'assets\liquidmetal-sun.ico'
 $ps2exeParams = @{
     InputFile = $sourcePath
     OutputFile = $exePath
@@ -86,14 +98,15 @@ $ps2exeParams = @{
     DPIAware = $true
     SupportOS = $true
     X64 = $true
-    Title = 'Longhua Weather Widget v1.1.0 - Anthropic-inspired Edition'
+    Title = $productName
     Description = 'Anthropic-inspired local Windows PowerShell WPF weather widget.'
-    Product = 'Longhua Weather Widget - Anthropic-inspired Edition'
-    Company = 'Longhua Weather Widget Project'
-    Copyright = 'Copyright (c) 2026 Longhua Weather Widget contributors'
+    Product = $productName
+    Company = 'Paper Weather Widget Project'
+    Copyright = 'Copyright (c) 2026 Paper Weather Widget contributors'
     Version = $fileVersion
 }
 
+if (Test-Path -LiteralPath $iconPath) { $ps2exeParams.IconFile = $iconPath }
 Invoke-PS2EXE @ps2exeParams
 
 if (-not (Test-Path -LiteralPath $exePath)) {
@@ -103,13 +116,13 @@ if (-not (Test-Path -LiteralPath $exePath)) {
 $packageDir = Join-Path ([IO.Path]::GetTempPath()) ('LonghuaWeatherWidget-package-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 try {
-    Copy-Item -LiteralPath $exePath -Destination (Join-Path $packageDir 'LonghuaWeatherWidget.exe') -Force
+    Copy-Item -LiteralPath $exePath -Destination (Join-Path $packageDir $packageExeName) -Force
     Copy-Item -LiteralPath $licensePath -Destination (Join-Path $packageDir 'LICENSE') -Force
 
     $packageReadme = @"
-Longhua Weather Widget v$Version - Anthropic-inspired Edition
+Paper Weather Widget v$Version
 
-Run LonghuaWeatherWidget.exe. No administrator rights are required.
+Run PaperWeatherWidget.exe. No administrator rights are required.
 
 Settings are stored in LonghuaWeatherWidget.settings.json next to the launched script or EXE. The app does not require an API key, account, telemetry, or paid weather service.
 
@@ -119,7 +132,7 @@ The app uses Open-Meteo as the primary weather provider and wttr.in as fallback.
 
 This build is unsigned. Windows SmartScreen may show an unknown publisher warning on first launch.
 "@
-    Set-Content -LiteralPath (Join-Path $packageDir 'README.txt') -Value $packageReadme -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $packageDir 'README.txt') -Value $packageReadme -Encoding ASCII
 
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force

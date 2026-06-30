@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$ReportDir = (Join-Path $PSScriptRoot 'reports')
 )
 
@@ -89,7 +89,7 @@ $summary = [pscustomobject]@{
     SwappedCoordinateCount = $swapped.Count
     RequestCatalogMismatchCount = $mismatch.Count
     ApproximateCoordinateCount = @($records | Where-Object { $_.IsApproximateCoordinate }).Count
-    Result = if ($records.Count -eq 47 -and $uniqueLocationKeys.Count -eq 47 -and $invalid.Count -eq 0 -and $zeroZero.Count -eq 0 -and $swapped.Count -eq 0 -and $mismatch.Count -eq 0) { 'PASS' } else { 'FAIL' }
+    Result = if ($records.Count -eq 51 -and $uniqueLocationKeys.Count -eq 51 -and $invalid.Count -eq 0 -and $zeroZero.Count -eq 0 -and $swapped.Count -eq 0 -and $mismatch.Count -eq 0) { 'PASS' } else { 'FAIL' }
 }
 
 $jsonPath = Join-Path $ReportDir 'location-catalog-audit.json'

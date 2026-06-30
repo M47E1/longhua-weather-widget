@@ -1,4 +1,4 @@
-﻿# Paper Weather Widget — Anthropic-inspired Edition
+# Paper Weather Widget - Anthropic-inspired Edition
 
 纸感天气小组件是一款 Anthropic-inspired 风格的轻量 Windows 天气小组件，支持当前天气、临近预报、模型风险提示、中文 / English 双语界面、地区切换、侧边抽屉和本地设置保存。
 
@@ -8,31 +8,25 @@ This is the 基础版本: a WPF-only desktop widget without WebView2, Node.js, C
 
 ## Download
 
-Download the current historical release from GitHub Releases:
+Download v1.3.0 from GitHub Releases:
 
-https://github.com/M47E1/paper-weather-widget/releases/tag/v1.1.0
+https://github.com/M47E1/paper-weather-widget/releases/tag/v1.3.0
 
-v1.1.0 was published before the project rename. Its downloadable files may still use the previous `LonghuaWeatherWidget` filename for historical compatibility.
+Recommended assets:
 
-Historical v1.1.0 assets:
-
-- `LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.exe`
-- `LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.zip`
+- `PaperWeatherWidget-v1.3.0-win-x64.exe`
+- `PaperWeatherWidget-v1.3.0-win-x64.zip`
 - `SHA256SUMS.txt`
 
-The v1.1.0 ZIP contains only `LICENSE`, `LonghuaWeatherWidget.exe`, and `README.txt`.
-
-Future v1.2.0 release assets should use:
-
-- `PaperWeatherWidget-v1.2.0-win-x64.exe`
-- `PaperWeatherWidget-v1.2.0-win-x64.zip`
-- `SHA256SUMS.txt`
+The ZIP contains only `LICENSE`, `PaperWeatherWidget.exe`, and `README.txt`.
 
 No administrator rights are required.
 
+Earlier v1.1.0 builds used the Longhua Weather Widget name. Those files remain historical artifacts only.
+
 ## Edition
 
-The UI uses an Anthropic-inspired style: paper-toned surfaces, restrained borders, compact typography, side-drawer mode, and warm accent controls. The project does not claim affiliation with Anthropic or Claude.
+The v1.3.0 UI uses an Anthropic-inspired style: paper-toned surfaces, restrained borders, compact typography, side-drawer mode, and warm accent controls. The project does not claim affiliation with Anthropic or Claude.
 
 ## Features
 
@@ -41,7 +35,7 @@ The UI uses an Anthropic-inspired style: paper-toned surfaces, restrained border
 - Cached weather stays usable when refresh fails.
 - Model-derived risk tips are separated from official weather warnings.
 - Chinese and English UI labels.
-- 47 real supported regions in the current built-in catalog.
+- 51 real supported regions in the current built-in catalog.
 - Side-drawer window with settings, language, refresh interval, and forecast slot controls.
 - Local settings are saved next to the launched script or EXE.
 
@@ -66,16 +60,24 @@ Do not commit real local settings, private paths, tokens, or exact home addresse
 ## Build Release Assets
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-release.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-release.ps1 -Version 1.3.0
 ```
 
-The current build script preserves the historical v1.1.0 asset names. The next planned release, v1.2.0, should switch release asset names to `PaperWeatherWidget`.
+The build writes:
+
+- `dist/PaperWeatherWidget-v1.3.0-win-x64.exe`
+- `dist/PaperWeatherWidget-v1.3.0-win-x64.zip`
+- `dist/SHA256SUMS.txt`
+
+The portable ZIP contains `PaperWeatherWidget.exe` plus `LICENSE` and `README.txt`.
+
+PS2EXE flags include `NoConsole`, `STA`, `DPIAware`, `SupportOS`, and `x64`. The build does not use `RequireAdmin`.
 
 ## Testing
 
 Use the verification scope that matches the change. Docs and GitHub metadata changes should use diff, text, and GitHub metadata checks, not weather smoke tests.
 
-Existing v1.1.0 release evidence is recorded in the release body and release candidate notes. Do not treat `RealUiInteractionSmoke` as passing; it remains a known WPF UI Automation popup limitation.
+Release evidence for v1.3.0 must come from current targeted verification. Older RC smoke reports are historical evidence only and are not final proof for this release.
 
 ## Known Limitations
 
@@ -83,7 +85,7 @@ Existing v1.1.0 release evidence is recorded in the release body and release can
 - Open-Meteo provides model current weather, not official on-site observation.
 - The base edition does not integrate an official weather warning API.
 - Model-derived content is a risk tip, not an official warning.
-- The built-in region catalog contains 47 real supported regions.
+- The built-in region catalog contains 51 real supported regions.
 - `RealUiInteractionSmoke` remains FAIL because of WPF UI Automation popup and AutomationId limitations.
 - Anthropic-inspired only: this is not an official Anthropic or Claude product.
 

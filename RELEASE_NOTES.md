@@ -1,54 +1,36 @@
-﻿# Paper Weather Widget Release Notes
+# Paper Weather Widget v1.3.0 - Anthropic-inspired Edition
 
-Project rename: Paper Weather Widget / 纸感天气小组件.
+Release title: Paper Weather Widget v1.3.0 - Anthropic-inspired Edition
 
-Earlier builds used the Longhua Weather Widget name. v1.1.0 downloadable files may still use the previous `LonghuaWeatherWidget` filename for historical compatibility. Future releases should use `PaperWeatherWidget` asset names.
+## What Changed
 
-This project uses an Anthropic-inspired visual style only. It is not an Anthropic or Claude product, does not use Anthropic or Claude logos, and does not claim official affiliation.
+- Keeps the Anthropic-inspired UI theme with paper-toned surfaces, restrained borders, dark neutral text, and warm accent controls.
+- Adds async weather refresh so network calls no longer block the UI thread.
+- Keeps window position stable when opening settings, changing selectors, refreshing, and toggling the side drawer.
+- Removes the visible side-drawer handle border and keeps X as direct app close.
+- Lazily initializes heavier visual layers and settings dropdown contents to improve startup.
+- Adds Zhongshan and an approximate Envicool Shenzhen HQ node to the built-in region catalog.
+- Renames the project and release assets to Paper Weather Widget / PaperWeatherWidget.
+- Keeps the base WPF-only architecture. No WebView2 renderer code was added.
+- Preserves the current weather and forecast distinction: current data is labeled Now; forecast data is labeled Forecast HH:mm.
+- Preserves Open-Meteo primary provider behavior, wttr.in fallback, cache behavior, and model risk semantics.
 
-## v1.1.0 Historical Release
+## Validation
 
-Release title:
+- Run-ProjectTests: 221/221 PASS.
+- LonghuaWeatherWidget.ps1 -TestMode: PASS.
+- Test-LocationCatalogAudit: PASS, 51 audited regions, 0 invalid coordinates, 0 0,0 coordinates, 0 swapped coordinates, 0 request/catalog mismatches.
+- Test-EnglishModeNoCjk: PASS.
+- Package verification: SHA256SUMS.txt matched local hashes; ZIP entries are exactly PaperWeatherWidget.exe, LICENSE, and README.txt; packaged EXE launch-close PASS.
+- Full region smoke, 47-region smoke, 200-region smoke, UiRegionRenderSmoke, and RealUiInteractionSmoke were not run because FULL_SMOKE_APPROVED was not provided.
 
-Longhua Weather Widget v1.1.0 - Anthropic-inspired Edition
+## SHA256
 
-Historical assets:
+3bcdc3fb801ee015d703aa33f6c48cd5c4c9594b6cfb9339a19755c06afecdc1  PaperWeatherWidget-v1.3.0-win-x64.exe
+b048c22c9ba37da7967c7e91a0cdc8c319bcfdf0879edbc0e6ac5906501194a2  PaperWeatherWidget-v1.3.0-win-x64.zip
 
-- `LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.exe`
-- `LonghuaWeatherWidget-v1.1.0-anthropic-win-x64.zip`
-- `SHA256SUMS.txt`
+## Notes
 
-Do not rebuild v1.1.0. Do not rewrite the v1.1.0 tag. Do not change the v1.1.0 assets.
+This edition is not affiliated with, endorsed by, or using brand assets from Anthropic or Claude. The wording "Anthropic-inspired" describes a general visual direction only.
 
-## Next Release: v1.2.0
-
-Planned release title:
-
-Paper Weather Widget v1.2.0 — Anthropic-inspired Edition
-
-Planned assets:
-
-- `PaperWeatherWidget-v1.2.0-win-x64.exe`
-- `PaperWeatherWidget-v1.2.0-win-x64.zip`
-- `SHA256SUMS.txt`
-
-Planned ZIP contents:
-
-- `LICENSE`
-- `PaperWeatherWidget.exe`
-- `README.txt`
-
-## Data Source Notes
-
-- Current weather data comes from Open-Meteo model current weather.
-- Open-Meteo data is not official on-site observation.
-- The base edition does not integrate an official weather warning API.
-- Model-derived content is a risk tip, not an official warning.
-- Only official `WarningText` should be treated as an official warning.
-- The built-in region catalog currently contains 47 real supported regions.
-
-## Validation Notes
-
-- `RealUiInteractionSmoke` remains FAIL because of WPF UI Automation popup and AutomationId limitations.
-- Do not record `RealUiInteractionSmoke` as PASS.
-- Docs-only and GitHub metadata changes should not rerun weather smoke tests.
+The executable is unsigned. Windows SmartScreen may show an unknown publisher warning on first launch.
